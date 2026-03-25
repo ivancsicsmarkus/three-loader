@@ -13,7 +13,10 @@ export class BrotliDecoder implements GeometryDecoder {
   public readonly workerType = WorkerType.DECODER_WORKER_BROTLI;
   private _metadata: Metadata;
 
-  constructor(public metadata: Metadata, private context: LoadingContext) {
+  constructor(
+    public metadata: Metadata,
+    private context: LoadingContext,
+  ) {
     this._metadata = metadata;
   }
 
@@ -70,7 +73,7 @@ export class BrotliDecoder implements GeometryDecoder {
 
     worker.postMessage(message, [message.buffer]);
 
-    const doneEvent = await new Promise<MessageEvent<any>>(res => {
+    const doneEvent = await new Promise<MessageEvent<any>>((res) => {
       worker.onmessage = res;
     });
 
