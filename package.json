@@ -36,7 +36,7 @@
     "commit": "git-cz",
     "prerelease": "npm run build",
     "release": "standard-version",
-    "prepare": "husky"
+    "prepare": "npm run build || true && husky"
   },
   "dependencies": {},
   "peerDependencies": {
