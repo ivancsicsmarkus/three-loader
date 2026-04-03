@@ -32,8 +32,7 @@
     "format:check": "npm run format -- --check",
     "commit": "git-cz",
     "prerelease": "npm run build",
-    "release": "standard-version",
-    "prepare": "npm run build || true && husky"
+    "release": "standard-version"
   },
   "dependencies": {},
   "peerDependencies": {
