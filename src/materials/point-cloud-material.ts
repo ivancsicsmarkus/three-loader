@@ -115,6 +115,7 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
   renderDepth: IUniform<boolean>;
+  customScalarRange: IUniform<[number, number]>;
 }
 
 const TREE_TYPE_DEFS = {
@@ -155,6 +156,7 @@ const COLOR_DEFS = {
   [PointColorType.PHONG]: 'color_type_phong',
   [PointColorType.RGB_HEIGHT]: 'color_type_rgb_height',
   [PointColorType.COMPOSITE]: 'color_type_composite',
+  [PointColorType.CUSTOM_SCALAR]: 'color_type_custom_scalar',
 };
 
 const CLIP_MODE_DEFS = {
@@ -252,6 +254,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     stripeDivisorY: makeUniform('f', 2),
     pointCloudMixAngle: makeUniform('f', 31),
     renderDepth: makeUniform('bool', false),
+    customScalarRange: makeUniform('fv', [0, 1] as [number, number]),
   };
 
   @uniform('bbSize') bbSize!: [number, number, number];
@@ -300,6 +303,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('stripeDivisorY') stripeDivisorY!: number;
   @uniform('pointCloudMixAngle') pointCloudMixAngle!: number;
   @uniform('renderDepth') renderDepth!: boolean;
+  @uniform('customScalarRange') customScalarRange!: [number, number];
 
   @requiresShaderUpdate() useClipBox: boolean = false;
   @requiresShaderUpdate() weighted: boolean = false;
@@ -315,6 +319,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @requiresShaderUpdate() useTextureBlending: boolean = false;
   @requiresShaderUpdate() usePointCloudMixing: boolean = false;
   @requiresShaderUpdate() highlightPoint: boolean = false;
+  @requiresShaderUpdate() customAttributeName: string = 'Deviation';
 
   attributes = {
     position: { type: 'fv', value: [] },
@@ -431,6 +436,9 @@ export class PointCloudMaterial extends RawShaderMaterial {
     define(SIZE_TYPE_DEFS[this.pointSizeType]);
     define(SHAPE_DEFS[this.shape]);
     define(COLOR_DEFS[this.pointColorType]);
+    if (this.pointColorType === PointColorType.CUSTOM_SCALAR) {
+      parts.push(`#define CUSTOM_ATTRIBUTE_NAME ${this.customAttributeName}`);
+    }
     define(CLIP_MODE_DEFS[this.clipMode]);
     define(OPACITY_DEFS[this.pointOpacityType]);
 
