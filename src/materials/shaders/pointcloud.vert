@@ -19,6 +19,10 @@ in float pointSourceID;
 in vec4 indices;
 in vec2 uv;
 
+#ifdef color_type_custom_scalar
+in float CUSTOM_ATTRIBUTE_NAME;
+#endif
+
 uniform mat4 modelMatrix;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
@@ -52,6 +56,7 @@ uniform bool isLeafNode;
 
 uniform float filterByNormalThreshold;
 uniform vec2 intensityRange;
+uniform vec2 customScalarRange;
 uniform float opacityAttenuation;
 uniform float intensityGamma;
 uniform float intensityContrast;
@@ -357,6 +362,14 @@ vec3 getElevation() {
 	return cElevation;
 }
 
+#ifdef color_type_custom_scalar
+vec3 getCustomScalar() {
+	float w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);
+	w = clamp(w, 0.0, 1.0);
+	return texture(gradient, vec2(w, 1.0 - w)).rgb;
+}
+#endif
+
 vec4 getClassification() {
 	vec2 uv = vec2(classification / 255.0, 0.5);
 	vec4 classColor = texture(classificationLUT, uv);
@@ -570,6 +583,8 @@ void main() {
 		vColor = color;
 	#elif defined color_type_composite
 		vColor = getCompositeColor();
+	#elif defined color_type_custom_scalar
+		vColor = getCustomScalar();
 	#endif
 
 	#if !defined color_type_composite && defined color_type_classification
