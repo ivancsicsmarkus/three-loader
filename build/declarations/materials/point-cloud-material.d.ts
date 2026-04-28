@@ -88,6 +88,7 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
   renderDepth: IUniform<boolean>;
+  customScalarRange: IUniform<[number, number]>;
 }
 export declare class PointCloudMaterial extends RawShaderMaterial {
   private static helperVec3;
@@ -155,6 +156,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
   stripeDivisorY: number;
   pointCloudMixAngle: number;
   renderDepth: boolean;
+  customScalarRange: [number, number];
   useClipBox: boolean;
   weighted: boolean;
   pointColorType: PointColorType;
@@ -169,6 +171,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
   useTextureBlending: boolean;
   usePointCloudMixing: boolean;
   highlightPoint: boolean;
+  customAttributeName: string;
   attributes: {
     position: {
       type: string;
