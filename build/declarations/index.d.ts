@@ -11,4 +11,6 @@ export * from './types';
 export * from './version';
 export { SplatsMesh } from './splats-mesh';
 export { loadPOC as V1_LOADER } from './loading';
+export { BinaryLoader, LazNodeLoader } from './loading';
+export type { IV1NodeLoader, V1NodeLoaderCallback } from './loading';
 export { loadOctree as V2_LOADER } from './loading2';

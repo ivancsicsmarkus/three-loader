@@ -34,6 +34,17 @@ module.exports = {
       },
 
       { test: /\.(vs|fs|glsl|vert|frag)$/, loader: 'raw-loader' },
+
+      // Inline the laz-perf wasm into the worker bundle as a base64 data URL
+      // so the consuming app does not have to host the wasm at a known URL.
+      {
+        test: /laz-perf[\\/].*\.wasm$/,
+        type: 'asset/inline',
+        generator: {
+          dataUrl: (content) =>
+            'data:application/wasm;base64,' + Buffer.from(content).toString('base64'),
+        },
+      },
     ],
   },
   plugins: [],

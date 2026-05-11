@@ -41,11 +41,25 @@ export declare const POINT_ATTRIBUTES: {
   NORMAL: IPointAttribute;
 };
 export type PointAttributeStringName = keyof typeof POINT_ATTRIBUTES;
+export type CompressedPointFormat = 'LAZ' | 'LAS';
+/**
+ * Returns true when the cloud.js `pointAttributes` value indicates that each
+ * node on disk is a self-contained LAZ file rather than a raw uncompressed
+ * attribute stream.
+ */
+export declare function isLazAttributes(p: unknown): p is 'LAZ';
 export declare class PointAttributes implements IPointAttributes {
   attributes: IPointAttribute[];
   byteSize: number;
   size: number;
-  constructor(pointAttributeNames?: PointAttributeStringName[]);
+  /**
+   * Set when the source data is a stream of complete LAZ/LAS files (one per
+   * node) instead of a flat list of uncompressed attributes. In that case
+   * `attributes` is empty and `byteSize` is `0` — the per-node point count
+   * comes from each LAZ file's own header, not from buffer length.
+   */
+  compressedFormat: CompressedPointFormat | null;
+  constructor(pointAttributeNames?: PointAttributeStringName[] | CompressedPointFormat | string);
   add(pointAttribute: IPointAttribute): void;
   hasColors(): boolean;
   hasNormals(): boolean;

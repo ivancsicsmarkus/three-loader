@@ -1,9 +1,9 @@
 import { Box3, Vector3 } from 'three';
-import { BinaryLoader, XhrRequest } from './loading';
+import { IV1NodeLoader, XhrRequest } from './loading';
 import { PointAttributes } from './point-attributes';
 import { PointCloudOctreeGeometryNode } from './point-cloud-octree-geometry-node';
 export declare class PointCloudOctreeGeometry {
-  loader: BinaryLoader;
+  loader: IV1NodeLoader;
   boundingBox: Box3;
   tightBoundingBox: Box3;
   offset: Vector3;
@@ -21,7 +21,7 @@ export declare class PointCloudOctreeGeometry {
   projection: any;
   url: string | null;
   constructor(
-    loader: BinaryLoader,
+    loader: IV1NodeLoader,
     boundingBox: Box3,
     tightBoundingBox: Box3,
     offset: Vector3,

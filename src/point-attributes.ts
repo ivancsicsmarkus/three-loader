@@ -114,15 +114,59 @@ export const POINT_ATTRIBUTES = {
 
 export type PointAttributeStringName = keyof typeof POINT_ATTRIBUTES;
 
+export type CompressedPointFormat = 'LAZ' | 'LAS';
+
+const COMPRESSED_FORMATS: ReadonlyArray<CompressedPointFormat> = ['LAZ', 'LAS'];
+
+/**
+ * Returns true when the cloud.js `pointAttributes` value indicates that each
+ * node on disk is a self-contained LAZ file rather than a raw uncompressed
+ * attribute stream.
+ */
+export function isLazAttributes(p: unknown): p is 'LAZ' {
+  return p === 'LAZ';
+}
+
+function isCompressedFormatString(p: unknown): p is CompressedPointFormat {
+  return typeof p === 'string' && (COMPRESSED_FORMATS as ReadonlyArray<string>).indexOf(p) !== -1;
+}
+
 export class PointAttributes implements IPointAttributes {
   attributes: IPointAttribute[] = [];
   byteSize: number = 0;
   size: number = 0;
+  /**
+   * Set when the source data is a stream of complete LAZ/LAS files (one per
+   * node) instead of a flat list of uncompressed attributes. In that case
+   * `attributes` is empty and `byteSize` is `0` — the per-node point count
+   * comes from each LAZ file's own header, not from buffer length.
+   */
+  compressedFormat: CompressedPointFormat | null = null;
 
-  constructor(pointAttributeNames: PointAttributeStringName[] = []) {
+  constructor(
+    pointAttributeNames: PointAttributeStringName[] | CompressedPointFormat | string = [],
+  ) {
+    if (isCompressedFormatString(pointAttributeNames)) {
+      this.compressedFormat = pointAttributeNames;
+      return;
+    }
+
+    if (typeof pointAttributeNames === 'string') {
+      throw new Error(
+        `Unknown pointAttributes value: "${pointAttributeNames}". ` +
+          `Expected an array of attribute names or one of: ${COMPRESSED_FORMATS.join(', ')}.`,
+      );
+    }
+
     for (let i = 0; i < pointAttributeNames.length; i++) {
       const pointAttributeName = pointAttributeNames[i];
       const pointAttribute = POINT_ATTRIBUTES[pointAttributeName];
+      if (pointAttribute === undefined) {
+        throw new Error(
+          `Unknown point attribute: "${pointAttributeName}". ` +
+            `Known attributes: ${Object.keys(POINT_ATTRIBUTES).join(', ')}.`,
+        );
+      }
       this.attributes.push(pointAttribute);
       this.byteSize += pointAttribute.byteSize;
       this.size++;
@@ -136,6 +180,10 @@ export class PointAttributes implements IPointAttributes {
   }
 
   hasColors(): boolean {
+    if (this.compressedFormat !== null) {
+      // LAZ/LAS contents are determined per-file; assume colors are possible.
+      return true;
+    }
     return this.attributes.find(isColorAttribute) !== undefined;
   }
 

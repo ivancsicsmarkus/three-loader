@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased
+
+### Features
+
+- Add LAZ-per-node support for Potree v1 clouds whose `cloud.js` advertises
+  `pointAttributes: "LAZ"` (one self-contained `.laz` file per octree node).
+  Decoding runs in a dedicated worker using `laz-perf` (wasm), with output
+  matching the existing uncompressed `BinaryLoader` `BufferGeometry` layout
+  (`position`, `color`, `intensity`, `classification`). Requires `version`
+  `>= 1.7` in `cloud.js`. The uncompressed `.bin` v1 path and the v2
+  pipeline are unchanged. New public exports: `LazNodeLoader`,
+  `IV1NodeLoader`, `isLazAttributes`, `PointAttributes#compressedFormat`.
+
 ## [1.0.0](https://github.com/pnext/three-loader/compare/v0.5.20...v1.0.0) (2025-11-05)
 
 ### ⚠ BREAKING CHANGES

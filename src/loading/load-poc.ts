@@ -3,14 +3,21 @@
 // -------------------------------------------------------------------------------------------------
 
 import { Box3, Vector3 } from 'three';
-import { PointAttributes, PointAttributeStringName } from '../point-attributes';
+import {
+  CompressedPointFormat,
+  isLazAttributes,
+  PointAttributes,
+  PointAttributeStringName,
+} from '../point-attributes';
 import { PointCloudOctreeGeometry } from '../point-cloud-octree-geometry';
 import { PointCloudOctreeGeometryNode } from '../point-cloud-octree-geometry-node';
 import { createChildAABB } from '../utils/bounds';
 import { getIndexFromName, handleFailedRequest } from '../utils/utils';
 import { Version } from '../version';
 import { BinaryLoader } from './binary-loader';
+import { LazNodeLoader } from './laz-node-loader';
 import { GetUrlFn, XhrRequest } from './types';
+import { IV1NodeLoader } from './v1-node-loader';
 
 interface BoundingBoxData {
   lx: number;
@@ -28,7 +35,7 @@ interface POCJson {
   points: number;
   boundingBox: BoundingBoxData;
   tightBoundingBox?: BoundingBoxData;
-  pointAttributes: PointAttributeStringName[];
+  pointAttributes: PointAttributeStringName[] | CompressedPointFormat | string;
   spacing: number;
   scale: number;
   hierarchyStepSize: number;
@@ -63,13 +70,33 @@ function parse(url: string, getUrl: GetUrlFn, xhrRequest: XhrRequest) {
   return (data: POCJson): Promise<PointCloudOctreeGeometry> => {
     const { offset, boundingBox, tightBoundingBox } = getBoundingBoxes(data);
 
-    const loader = new BinaryLoader({
-      getUrl,
-      version: data.version,
-      boundingBox,
-      scale: data.scale,
-      xhrRequest,
-    });
+    let loader: IV1NodeLoader;
+    if (isLazAttributes(data.pointAttributes)) {
+      const version = new Version(data.version);
+      if (version.upTo('1.6')) {
+        throw new Error(
+          `Potree v1 LAZ-per-node clouds require version >= 1.7 (cloud.js advertises ${data.version}).`,
+        );
+      }
+      loader = new LazNodeLoader({
+        getUrl,
+        version: data.version,
+        boundingBox,
+        xhrRequest,
+      });
+    } else if (data.pointAttributes === 'LAS') {
+      throw new Error(
+        'Potree v1 clouds with `pointAttributes: "LAS"` (uncompressed per-node LAS) are not supported.',
+      );
+    } else {
+      loader = new BinaryLoader({
+        getUrl,
+        version: data.version,
+        boundingBox,
+        scale: data.scale,
+        xhrRequest,
+      });
+    }
 
     const pco = new PointCloudOctreeGeometry(
       loader,
@@ -86,7 +113,9 @@ function parse(url: string, getUrl: GetUrlFn, xhrRequest: XhrRequest) {
     pco.hierarchyStepSize = data.hierarchyStepSize;
     pco.projection = data.projection;
     pco.offset = offset;
-    pco.pointAttributes = new PointAttributes(data.pointAttributes);
+    pco.pointAttributes = new PointAttributes(
+      data.pointAttributes as PointAttributeStringName[] | CompressedPointFormat,
+    );
 
     const nodes: Record<string, PointCloudOctreeGeometryNode> = {};
 
