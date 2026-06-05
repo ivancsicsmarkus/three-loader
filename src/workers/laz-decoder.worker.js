@@ -168,13 +168,16 @@ function decode(buffer, nodeMin) {
       let sumY = 0;
       let sumZ = 0;
 
-      // Reuse a single DataView over a stack-allocated slice of the heap for
-      // every point — avoids per-point allocations.
-      const heap = module.HEAPU8.buffer;
-      const pointView = new DataView(heap, pointPtr, recordLen);
-
       for (let i = 0; i < numPoints; i++) {
         decoder.getPoint(pointPtr);
+
+        // laz-perf grows the wasm heap as it decompresses LAZ chunks, which
+        // detaches any ArrayBuffer reference captured before the loop (a cached
+        // DataView then throws "detached or out-of-bounds ArrayBuffer" on the
+        // next read). emscripten repoints module.HEAPU8 at the live buffer after
+        // growth, so re-derive the view from it each iteration. The pointPtr
+        // byte offset stays valid across growth.
+        const pointView = new DataView(module.HEAPU8.buffer, pointPtr, recordLen);
 
         const ix = pointView.getInt32(0, true);
         const iy = pointView.getInt32(4, true);
