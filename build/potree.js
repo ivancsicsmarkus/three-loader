@@ -2356,8 +2356,9 @@
                   I(),
                   fA.WORKER_POOL.releaseWorker(C);
               };
-              const Q = { buffer: g, nodeMin: A.boundingBox.min.toArray() };
-              C.worker.postMessage(Q, [Q.buffer]);
+              const Q = A.boundingBox.min.clone().add(A.pcoGeometry.offset),
+                E = { buffer: g, nodeMin: Q.toArray() };
+              C.worker.postMessage(E, [E.buffer]);
             });
       }
       getTightBoundingBox({ min: A, max: g }) {

@@ -143,9 +143,17 @@ export class LazNodeLoader implements IV1NodeLoader {
         LazNodeLoader.WORKER_POOL.releaseWorker(autoTerminatingWorker);
       };
 
+      // The worker reconstructs absolute world coordinates from each LAZ file's
+      // own header (`ix * scale + headerOffset`), so it must subtract the node's
+      // *absolute* world-space min. `node.boundingBox.min` is already in the
+      // offset-subtracted frame (see load-poc `getBoundingBoxes`), and the render
+      // transform re-applies `pcoGeometry.offset` (point-cloud-octree.ts) — so
+      // passing the offset-subtracted min here would double-count the offset and
+      // shift the whole cloud. Add the offset back to get the true world min.
+      const worldMin = node.boundingBox.min.clone().add(node.pcoGeometry.offset);
       const message = {
         buffer,
-        nodeMin: node.boundingBox.min.toArray(),
+        nodeMin: worldMin.toArray(),
       };
 
       autoTerminatingWorker.worker.postMessage(message, [message.buffer]);
