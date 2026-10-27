@@ -57,6 +57,8 @@ uniform bool isLeafNode;
 uniform float filterByNormalThreshold;
 uniform vec2 intensityRange;
 uniform vec2 customScalarRange;
+// rgb + class id (w < 0 = unused slot); CUSTOM_SCALAR_CLASS_SLOTS entries.
+uniform vec4 customScalarClassColors[4];
 uniform float opacityAttenuation;
 uniform float intensityGamma;
 uniform float intensityContrast;
@@ -364,6 +366,11 @@ vec3 getElevation() {
 
 #ifdef color_type_custom_scalar
 vec3 getCustomScalar() {
+	for (int i = 0; i < 4; i++) {
+		if (customScalarClassColors[i].w >= 0.0 && abs(classification - customScalarClassColors[i].w) < 0.5) {
+			return customScalarClassColors[i].rgb;
+		}
+	}
 	float w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);
 	w = clamp(w, 0.0, 1.0);
 	return texture(gradient, vec2(w, 1.0 - w)).rgb;

@@ -116,7 +116,11 @@ export interface IPointCloudMaterialUniforms {
   pointCloudMixingMode: IUniform<number>;
   renderDepth: IUniform<boolean>;
   customScalarRange: IUniform<[number, number]>;
+  customScalarClassColors: IUniform<Vector4[]>;
 }
+
+/** Size of the `customScalarClassColors` uniform array (pointcloud.vert). */
+export const CUSTOM_SCALAR_CLASS_SLOTS = 4;
 
 const TREE_TYPE_DEFS = {
   [TreeType.OCTREE]: 'tree_type_octree',
@@ -255,6 +259,10 @@ export class PointCloudMaterial extends RawShaderMaterial {
     pointCloudMixAngle: makeUniform('f', 31),
     renderDepth: makeUniform('bool', false),
     customScalarRange: makeUniform('fv', [0, 1] as [number, number]),
+    customScalarClassColors: makeUniform(
+      'v4v',
+      Array.from({ length: CUSTOM_SCALAR_CLASS_SLOTS }, () => new Vector4(0, 0, 0, -1)),
+    ),
   };
 
   @uniform('bbSize') bbSize!: [number, number, number];
@@ -304,6 +312,32 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('pointCloudMixAngle') pointCloudMixAngle!: number;
   @uniform('renderDepth') renderDepth!: boolean;
   @uniform('customScalarRange') customScalarRange!: [number, number];
+
+  /**
+   * Classes drawn in a fixed colour instead of the custom-scalar gradient, as
+   * `{ [classification]: Color }`, at most `CUSTOM_SCALAR_CLASS_SLOTS` entries.
+   * Only read under `PointColorType.CUSTOM_SCALAR`. Uniform-only: setting it
+   * never recompiles the shader.
+   */
+  get customScalarClassColors(): Record<number, Color> {
+    const out: Record<number, Color> = {};
+    for (const v of this.uniforms.customScalarClassColors.value) {
+      if (v.w >= 0) out[v.w] = new Color(v.x, v.y, v.z);
+    }
+    return out;
+  }
+
+  set customScalarClassColors(colors: Record<number, Color>) {
+    const entries = Object.entries(colors).slice(0, CUSTOM_SCALAR_CLASS_SLOTS);
+    this.uniforms.customScalarClassColors.value = Array.from(
+      { length: CUSTOM_SCALAR_CLASS_SLOTS },
+      (_, i) => {
+        const e = entries[i];
+        return e ? new Vector4(e[1].r, e[1].g, e[1].b, Number(e[0])) : new Vector4(0, 0, 0, -1);
+      },
+    );
+    this.uniformsNeedUpdate = true;
+  }
 
   @requiresShaderUpdate() useClipBox: boolean = false;
   @requiresShaderUpdate() weighted: boolean = false;
