@@ -57,6 +57,7 @@ uniform bool isLeafNode;
 uniform float filterByNormalThreshold;
 uniform vec2 intensityRange;
 uniform vec2 customScalarRange;
+// SKYGIS FORK (see SKYGIS.md): PointCloudMaterial.customScalarClassColors.
 // rgb + class id (w < 0 = unused slot); CUSTOM_SCALAR_CLASS_SLOTS entries.
 uniform vec4 customScalarClassColors[4];
 uniform float opacityAttenuation;
@@ -366,6 +367,7 @@ vec3 getElevation() {
 
 #ifdef color_type_custom_scalar
 vec3 getCustomScalar() {
+	// SKYGIS FORK: chosen classes override the gradient (customScalarClassColors).
 	for (int i = 0; i < 4; i++) {
 		if (customScalarClassColors[i].w >= 0.0 && abs(classification - customScalarClassColors[i].w) < 0.5) {
 			return customScalarClassColors[i].rgb;

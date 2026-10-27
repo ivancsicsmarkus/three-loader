@@ -1,3 +1,5 @@
+> **SkyGIS fork** — branch `skygis-deviation`. What it adds over upstream and how to release a change: [SKYGIS.md](SKYGIS.md).
+
 # README
 
 This project is based on the core/loading parts of [Potree](http://potree.org/), converted to Typescript for usage directly in ThreeJS-based third-party applications.

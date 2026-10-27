@@ -91,7 +91,7 @@ export interface IPointCloudMaterialUniforms {
   customScalarRange: IUniform<[number, number]>;
   customScalarClassColors: IUniform<Vector4[]>;
 }
-/** Size of the `customScalarClassColors` uniform array (pointcloud.vert). */
+/** SKYGIS FORK: size of the `customScalarClassColors` uniform array (pointcloud.vert). */
 export declare const CUSTOM_SCALAR_CLASS_SLOTS = 4;
 export declare class PointCloudMaterial extends RawShaderMaterial {
   private static helperVec3;
@@ -161,6 +161,8 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
   renderDepth: boolean;
   customScalarRange: [number, number];
   /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
    * Classes drawn in a fixed colour instead of the custom-scalar gradient, as
    * `{ [classification]: Color }`, at most `CUSTOM_SCALAR_CLASS_SLOTS` entries.
    * Only read under `PointColorType.CUSTOM_SCALAR`. Uniform-only: setting it
