@@ -494,15 +494,16 @@
       get customScalarClassColors() {
         const A = {};
         for (const g of this.uniforms.customScalarClassColors.value)
-          g.w >= 0 && (A[g.w] = new a.Color(g.x, g.y, g.z));
+          g.w >= 0 && (A[g.w] = new a.Color().setRGB(g.x, g.y, g.z, a.SRGBColorSpace));
         return A;
       }
       set customScalarClassColors(A) {
-        const g = Object.entries(A).slice(0, m);
-        (this.uniforms.customScalarClassColors.value = Array.from({ length: m }, (A, I) => {
-          const B = g[I];
-          return B
-            ? new a.Vector4(B[1].r, B[1].g, B[1].b, Number(B[0]))
+        const g = Object.entries(A).slice(0, m),
+          I = { r: 0, g: 0, b: 0 };
+        (this.uniforms.customScalarClassColors.value = Array.from({ length: m }, (A, B) => {
+          const C = g[B];
+          return C
+            ? (C[1].getRGB(I, a.SRGBColorSpace), new a.Vector4(I.r, I.g, I.b, Number(C[0])))
             : new a.Vector4(0, 0, 0, -1);
         })),
           (this.uniformsNeedUpdate = !0);

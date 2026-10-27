@@ -3,6 +3,7 @@ import {
   BufferGeometry,
   Camera,
   Color,
+  SRGBColorSpace,
   GLSL3,
   LessEqualDepth,
   Material,
@@ -324,18 +325,24 @@ export class PointCloudMaterial extends RawShaderMaterial {
   get customScalarClassColors(): Record<number, Color> {
     const out: Record<number, Color> = {};
     for (const v of this.uniforms.customScalarClassColors.value) {
-      if (v.w >= 0) out[v.w] = new Color(v.x, v.y, v.z);
+      if (v.w >= 0) out[v.w] = new Color().setRGB(v.x, v.y, v.z, SRGBColorSpace);
     }
     return out;
   }
 
   set customScalarClassColors(colors: Record<number, Color>) {
     const entries = Object.entries(colors).slice(0, CUSTOM_SCALAR_CLASS_SLOTS);
+    // sRGB, like the gradient texture (`getHexString`): this RawShaderMaterial
+    // writes the value straight out, and a `Color` holds linear sRGB under
+    // three's ColorManagement — copying `.r/.g/.b` drew every ink too dark.
+    const rgb = { r: 0, g: 0, b: 0 };
     this.uniforms.customScalarClassColors.value = Array.from(
       { length: CUSTOM_SCALAR_CLASS_SLOTS },
       (_, i) => {
         const e = entries[i];
-        return e ? new Vector4(e[1].r, e[1].g, e[1].b, Number(e[0])) : new Vector4(0, 0, 0, -1);
+        if (!e) return new Vector4(0, 0, 0, -1);
+        e[1].getRGB(rgb, SRGBColorSpace);
+        return new Vector4(rgb.r, rgb.g, rgb.b, Number(e[0]));
       },
     );
     this.uniformsNeedUpdate = true;
