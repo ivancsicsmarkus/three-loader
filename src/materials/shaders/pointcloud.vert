@@ -377,7 +377,12 @@ vec3 getCustomScalar() {
 		}
 	}
 	// SKYGIS FORK: at or below the threshold (or NaN, i.e. unscored), the point's own RGB.
-	if (customScalarRgbBelow.x > 0.5 && !(CUSTOM_ATTRIBUTE_NAME > customScalarRgbBelow.y)) {
+	// NaN is tested by its bits: a GPU compiler may rewrite `!(v > y)` as `v <= y`,
+	// which is false for NaN, and the unscored points then fell to the gradient's
+	// grey end (2026-10-29, the clearance corridor's outer edges).
+	float rgbBelowValue = CUSTOM_ATTRIBUTE_NAME;
+	bool rgbBelowNan = (floatBitsToUint(rgbBelowValue) & 0x7fffffffu) > 0x7f800000u;
+	if (customScalarRgbBelow.x > 0.5 && (rgbBelowNan || rgbBelowValue <= customScalarRgbBelow.y)) {
 		return getRGB();
 	}
 	float w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);
