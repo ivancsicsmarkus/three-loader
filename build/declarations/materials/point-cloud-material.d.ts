@@ -90,6 +90,7 @@ export interface IPointCloudMaterialUniforms {
   renderDepth: IUniform<boolean>;
   customScalarRange: IUniform<[number, number]>;
   customScalarClassColors: IUniform<Vector4[]>;
+  customScalarRgbBelow: IUniform<[number, number]>;
 }
 /** SKYGIS FORK: size of the `customScalarClassColors` uniform array (pointcloud.vert). */
 export declare const CUSTOM_SCALAR_CLASS_SLOTS = 4;
@@ -170,6 +171,17 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
    */
   get customScalarClassColors(): Record<number, Color>;
   set customScalarClassColors(colors: Record<number, Color>);
+  /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
+   * Under `PointColorType.CUSTOM_SCALAR`, a point whose scalar is at or below
+   * this value (or is not a number) is drawn in its own RGB instead of the
+   * gradient. `null` (the default) turns it off. Classes in
+   * `customScalarClassColors` still win. Uniform-only: setting it never
+   * recompiles the shader. A cloud without RGB reads black there.
+   */
+  get customScalarRgbBelow(): number | null;
+  set customScalarRgbBelow(value: number | null);
   useClipBox: boolean;
   weighted: boolean;
   pointColorType: PointColorType;

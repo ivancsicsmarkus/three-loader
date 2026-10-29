@@ -60,6 +60,9 @@ uniform vec2 customScalarRange;
 // SKYGIS FORK (see SKYGIS.md): PointCloudMaterial.customScalarClassColors.
 // rgb + class id (w < 0 = unused slot); CUSTOM_SCALAR_CLASS_SLOTS entries.
 uniform vec4 customScalarClassColors[4];
+// SKYGIS FORK: PointCloudMaterial.customScalarRgbBelow — x > 0.5 = on, y = the
+// value at or below which a point draws its own RGB instead of the gradient.
+uniform vec2 customScalarRgbBelow;
 uniform float opacityAttenuation;
 uniform float intensityGamma;
 uniform float intensityContrast;
@@ -372,6 +375,10 @@ vec3 getCustomScalar() {
 		if (customScalarClassColors[i].w >= 0.0 && abs(classification - customScalarClassColors[i].w) < 0.5) {
 			return customScalarClassColors[i].rgb;
 		}
+	}
+	// SKYGIS FORK: at or below the threshold (or NaN, i.e. unscored), the point's own RGB.
+	if (customScalarRgbBelow.x > 0.5 && !(CUSTOM_ATTRIBUTE_NAME > customScalarRgbBelow.y)) {
+		return getRGB();
 	}
 	float w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);
 	w = clamp(w, 0.0, 1.0);
