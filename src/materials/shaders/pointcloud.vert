@@ -63,6 +63,61 @@ uniform vec4 customScalarClassColors[4];
 // SKYGIS FORK: PointCloudMaterial.customScalarRgbBelow — x > 0.5 = on, y = the
 // value at or below which a point draws its own RGB instead of the gradient.
 uniform vec2 customScalarRgbBelow;
+
+// SKYGIS FORK: PointCloudMaterial.corridorMask (see SKYGIS.md). Hides points
+// whose (station, offset) on the nearest candidate segment of their grid cell
+// lies inside `corridorMaskBand` (offsetFrom, offsetTo, stationFrom, stationTo).
+#if defined use_corridor_mask
+	#define corridor_max_candidates 32
+	#define CORRIDOR_TEX_WIDTH 4096
+	uniform mat4 corridorMaskMatrix;
+	uniform highp sampler2D corridorMaskCells;
+	uniform highp sampler2D corridorMaskCandidates;
+	uniform highp sampler2D corridorMaskSegments;
+	uniform vec4 corridorMaskGrid; // x0, y0, cell size, nx
+	uniform float corridorMaskNy;
+	uniform vec4 corridorMaskBand;
+
+	vec4 corridorFetch(highp sampler2D tex, int idx) {
+		return texelFetch(tex, ivec2(idx % CORRIDOR_TEX_WIDTH, idx / CORRIDOR_TEX_WIDTH), 0);
+	}
+
+	bool corridorMaskHides() {
+		vec2 p = (corridorMaskMatrix * vec4(position, 1.0)).xy;
+		int i = int(floor((p.x - corridorMaskGrid.x) / corridorMaskGrid.z));
+		int j = int(floor((p.y - corridorMaskGrid.y) / corridorMaskGrid.z));
+		int nx = int(corridorMaskGrid.w);
+		if (i < 0 || j < 0 || i >= nx || j >= int(corridorMaskNy)) {
+			return false;
+		}
+		vec2 cell = corridorFetch(corridorMaskCells, j * nx + i).xy;
+		int start = int(cell.x);
+		int count = int(cell.y);
+		float bestDist = 1e30;
+		float station = 0.0;
+		float offset = 0.0;
+		for (int c = 0; c < corridor_max_candidates; c++) {
+			if (c >= count) {
+				break;
+			}
+			int s = int(corridorFetch(corridorMaskCandidates, start + c).x);
+			vec4 ab = corridorFetch(corridorMaskSegments, s * 2);
+			vec4 sl = corridorFetch(corridorMaskSegments, s * 2 + 1);
+			vec2 d = ab.zw - ab.xy;
+			vec2 ap = p - ab.xy;
+			float t = clamp(dot(ap, d) / dot(d, d), 0.0, 1.0);
+			float dist = length(ap - d * t);
+			if (dist < bestDist) {
+				bestDist = dist;
+				station = sl.x + sl.y * t;
+				offset = (d.x * ap.y - d.y * ap.x) > 0.0 ? -dist : dist;
+			}
+		}
+		return count > 0
+			&& offset >= corridorMaskBand.x && offset <= corridorMaskBand.y
+			&& station >= corridorMaskBand.z && station <= corridorMaskBand.w;
+	}
+#endif
 uniform float opacityAttenuation;
 uniform float intensityGamma;
 uniform float intensityContrast;
@@ -648,6 +703,12 @@ void main() {
 		}
 	#endif
 
+
+	#if defined use_corridor_mask
+		if (corridorMaskHides()) {
+			gl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);
+		}
+	#endif
 
 	// ---------------------
 	// For Depth purposes

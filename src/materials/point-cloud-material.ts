@@ -3,6 +3,12 @@ import {
   BufferGeometry,
   Camera,
   Color,
+  DataTexture,
+  FloatType,
+  Matrix4,
+  RedFormat,
+  RGBAFormat,
+  RGFormat,
   SRGBColorSpace,
   GLSL3,
   LessEqualDepth,
@@ -119,6 +125,57 @@ export interface IPointCloudMaterialUniforms {
   customScalarRange: IUniform<[number, number]>;
   customScalarClassColors: IUniform<Vector4[]>;
   customScalarRgbBelow: IUniform<[number, number]>;
+  corridorMaskMatrix: IUniform<Matrix4>;
+  corridorMaskCells: IUniform<Texture | null>;
+  corridorMaskCandidates: IUniform<Texture | null>;
+  corridorMaskSegments: IUniform<Texture | null>;
+  corridorMaskGrid: IUniform<[number, number, number, number]>;
+  corridorMaskNy: IUniform<number>;
+  corridorMaskBand: IUniform<[number, number, number, number]>;
+}
+
+/**
+ * SKYGIS FORK (see SKYGIS.md): a 2D footprint along a polyline whose points are
+ * hidden — `material.corridorMask`. Coordinates are in the mask's LOCAL frame
+ * (`material.corridorMaskFrame` maps world into it). A point is hidden when its
+ * projection onto the nearest of its grid cell's candidate segments has
+ * `band[0] <= offset <= band[1]` and `band[2] <= station <= band[3]` (offset
+ * negative on the left). The app builds it (SkyGIS
+ * `app/src/lib/clearance/sourceMask.ts`).
+ */
+export interface ICorridorMask {
+  /** Local XY of the grid's lower-left corner. */
+  cellOrigin: [number, number];
+  cellSize: number;
+  nx: number;
+  ny: number;
+  /** 2 floats a cell (row-major): candidate start, count (0 = nothing hidden there). */
+  cells: Float32Array;
+  /** Segment indices; at most `CORRIDOR_MASK_MAX_CANDIDATES` a cell. */
+  candidates: Float32Array;
+  /** 8 floats a segment: ax, ay, bx, by, station at a, length, 0, 0. */
+  segments: Float32Array;
+  /** offsetFrom, offsetTo, stationFrom, stationTo. */
+  band: [number, number, number, number];
+}
+
+/** SKYGIS FORK: the shader's candidate loop bound (`corridor_max_candidates`). */
+export const CORRIDOR_MASK_MAX_CANDIDATES = 32;
+/** SKYGIS FORK: width of the corridor mask's data textures (`CORRIDOR_TEX_WIDTH`). */
+const CORRIDOR_TEX_WIDTH = 4096;
+
+function corridorTexture(data: Float32Array, channels: 1 | 2 | 4): DataTexture {
+  const texels = Math.max(1, Math.ceil(data.length / channels));
+  const height = Math.ceil(texels / CORRIDOR_TEX_WIDTH);
+  const padded = new Float32Array(CORRIDOR_TEX_WIDTH * height * channels);
+  padded.set(data);
+  const format = channels === 1 ? RedFormat : channels === 2 ? RGFormat : RGBAFormat;
+  const tex = new DataTexture(padded, CORRIDOR_TEX_WIDTH, height, format, FloatType);
+  tex.minFilter = NearestFilter;
+  tex.magFilter = NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 /** SKYGIS FORK: size of the `customScalarClassColors` uniform array (pointcloud.vert). */
@@ -266,6 +323,13 @@ export class PointCloudMaterial extends RawShaderMaterial {
       Array.from({ length: CUSTOM_SCALAR_CLASS_SLOTS }, () => new Vector4(0, 0, 0, -1)),
     ),
     customScalarRgbBelow: makeUniform('fv', [0, 0] as [number, number]),
+    corridorMaskMatrix: makeUniform('Matrix4fv', new Matrix4()),
+    corridorMaskCells: makeUniform('t', null),
+    corridorMaskCandidates: makeUniform('t', null),
+    corridorMaskSegments: makeUniform('t', null),
+    corridorMaskGrid: makeUniform('fv', [0, 0, 1, 0] as [number, number, number, number]),
+    corridorMaskNy: makeUniform('f', 0),
+    corridorMaskBand: makeUniform('fv', [0, 0, 0, 0] as [number, number, number, number]),
   };
 
   @uniform('bbSize') bbSize!: [number, number, number];
@@ -372,6 +436,91 @@ export class PointCloudMaterial extends RawShaderMaterial {
     this.uniformsNeedUpdate = true;
   }
 
+  private _corridorMask: ICorridorMask | null = null;
+  /** Textures this material made for its mask (a pick material borrows them: empty). */
+  private corridorMaskTextures: DataTexture[] = [];
+
+  /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
+   * World → the mask's local frame. Composed with each node's world matrix on
+   * the CPU (float64) before upload, so UTM-scale coordinates keep their
+   * precision. Mutate it in place or assign a new one; no recompile.
+   */
+  corridorMaskFrame: Matrix4 = new Matrix4();
+
+  /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
+   * Hide the points inside a footprint along a polyline (`ICorridorMask`).
+   * `null` (the default) turns it off. Setting it uploads three small data
+   * textures; only a change between null and a mask recompiles the shader.
+   */
+  get corridorMask(): ICorridorMask | null {
+    return this._corridorMask;
+  }
+
+  set corridorMask(mask: ICorridorMask | null) {
+    if (mask === this._corridorMask) return;
+    const wasOn = this._corridorMask !== null;
+    this.disposeCorridorMaskTextures();
+    this._corridorMask = mask;
+    if (mask) {
+      const cells = corridorTexture(mask.cells, 2);
+      const candidates = corridorTexture(mask.candidates, 1);
+      const segments = corridorTexture(mask.segments, 4);
+      this.corridorMaskTextures = [cells, candidates, segments];
+      this.applyCorridorMask(mask, cells, candidates, segments);
+    }
+    if (wasOn !== (mask !== null)) this.updateShaderSource();
+    this.uniformsNeedUpdate = true;
+  }
+
+  /** Use `other`'s mask and frame without owning its textures (the pick material). */
+  shareCorridorMask(other: PointCloudMaterial): void {
+    const mask = other._corridorMask;
+    this.corridorMaskFrame = other.corridorMaskFrame;
+    if (mask === this._corridorMask) return;
+    const wasOn = this._corridorMask !== null;
+    this.disposeCorridorMaskTextures();
+    this._corridorMask = mask;
+    if (mask) {
+      const u = other.uniforms;
+      this.applyCorridorMask(
+        mask,
+        u.corridorMaskCells.value!,
+        u.corridorMaskCandidates.value!,
+        u.corridorMaskSegments.value!,
+      );
+    }
+    if (wasOn !== (mask !== null)) this.updateShaderSource();
+    this.uniformsNeedUpdate = true;
+  }
+
+  private applyCorridorMask(
+    mask: ICorridorMask,
+    cells: Texture,
+    candidates: Texture,
+    segments: Texture,
+  ): void {
+    const u = this.uniforms;
+    u.corridorMaskCells.value = cells;
+    u.corridorMaskCandidates.value = candidates;
+    u.corridorMaskSegments.value = segments;
+    u.corridorMaskGrid.value = [mask.cellOrigin[0], mask.cellOrigin[1], mask.cellSize, mask.nx];
+    u.corridorMaskNy.value = mask.ny;
+    u.corridorMaskBand.value = [...mask.band] as [number, number, number, number];
+  }
+
+  private disposeCorridorMaskTextures(): void {
+    for (const t of this.corridorMaskTextures) t.dispose();
+    this.corridorMaskTextures = [];
+    const u = this.uniforms;
+    u.corridorMaskCells.value = null;
+    u.corridorMaskCandidates.value = null;
+    u.corridorMaskSegments.value = null;
+  }
+
   @requiresShaderUpdate() useClipBox: boolean = false;
   @requiresShaderUpdate() weighted: boolean = false;
   @requiresShaderUpdate() pointColorType: PointColorType = PointColorType.RGB;
@@ -447,6 +596,9 @@ export class PointCloudMaterial extends RawShaderMaterial {
       this.classificationTexture.dispose();
       this.classificationTexture = undefined;
     }
+
+    this.disposeCorridorMaskTextures();
+    this._corridorMask = null;
 
     if (this.depthMap) {
       this.depthMap.dispose();
@@ -540,6 +692,10 @@ export class PointCloudMaterial extends RawShaderMaterial {
 
     if (this.highlightPoint) {
       define('highlight_point');
+    }
+
+    if (this._corridorMask) {
+      define('use_corridor_mask');
     }
 
     if (this.useTextureBlending) {
@@ -786,6 +942,14 @@ export class PointCloudMaterial extends RawShaderMaterial {
 
       materialUniforms.pcIndex.value =
         pcIndex !== undefined ? pcIndex : octree.visibleNodes.indexOf(node);
+
+      // SKYGIS FORK: the corridor mask's frame, composed in float64 here.
+      if (pointCloudMaterial.corridorMask) {
+        materialUniforms.corridorMaskMatrix.value.multiplyMatrices(
+          pointCloudMaterial.corridorMaskFrame,
+          node.sceneNode.matrixWorld,
+        );
+      }
 
       // Note: when changing uniforms in onBeforeRender, the flag uniformsNeedUpdate has to be
       // set to true to instruct ThreeJS to upload them. See also

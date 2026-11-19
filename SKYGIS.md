@@ -11,6 +11,15 @@ gotchas) lives in the app repo: `docs/three-loader-fork.md`.
 
 ## Added over upstream
 
+- `material.corridorMask` — `ICorridorMask | null`, with `material.corridorMaskFrame`
+  (world → the mask's local frame, composed with each node's matrix in float64
+  in `makeOnBeforeRender`). Hides the points whose (station, offset) on the
+  nearest candidate segment of their grid cell lies in a band: three data
+  textures (cells RG32F, candidates R32F, segments RGBA32F, 4096 wide), at most
+  `CORRIDOR_MASK_MAX_CANDIDATES` (32) segments a cell. Only null <-> mask
+  recompiles (`use_corridor_mask`). The picker shares it, so a hidden point
+  cannot be picked. (SkyGIS clearance: the source cloud masked under a run's
+  result band, `app/src/lib/clearance/sourceMask.ts`.)
 - `material.customScalarRgbBelow` — `number | null`. Under
   `PointColorType.CUSTOM_SCALAR`, a point whose scalar is at or below it (or
   NaN) draws its own RGB instead of the gradient; class colours still win.

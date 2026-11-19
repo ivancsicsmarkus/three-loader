@@ -270,6 +270,8 @@ export class PointCloudOctreePicker {
     pickMaterial.classificationFilter = nodeMaterial.classificationFilter;
     pickMaterial.useFilterByClassification = nodeMaterial.useFilterByClassification;
     pickMaterial.filterByNormalThreshold = nodeMaterial.filterByNormalThreshold;
+    // SKYGIS FORK: a point the corridor mask hides cannot be picked either.
+    pickMaterial.shareCorridorMask(nodeMaterial);
 
     if (params.pickOutsideClipRegion) {
       pickMaterial.clipMode = ClipMode.DISABLED;

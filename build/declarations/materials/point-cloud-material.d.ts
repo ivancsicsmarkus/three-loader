@@ -2,6 +2,7 @@ import {
   BufferGeometry,
   Camera,
   Color,
+  Matrix4,
   Material,
   RawShaderMaterial,
   Scene,
@@ -91,7 +92,40 @@ export interface IPointCloudMaterialUniforms {
   customScalarRange: IUniform<[number, number]>;
   customScalarClassColors: IUniform<Vector4[]>;
   customScalarRgbBelow: IUniform<[number, number]>;
+  corridorMaskMatrix: IUniform<Matrix4>;
+  corridorMaskCells: IUniform<Texture | null>;
+  corridorMaskCandidates: IUniform<Texture | null>;
+  corridorMaskSegments: IUniform<Texture | null>;
+  corridorMaskGrid: IUniform<[number, number, number, number]>;
+  corridorMaskNy: IUniform<number>;
+  corridorMaskBand: IUniform<[number, number, number, number]>;
 }
+/**
+ * SKYGIS FORK (see SKYGIS.md): a 2D footprint along a polyline whose points are
+ * hidden — `material.corridorMask`. Coordinates are in the mask's LOCAL frame
+ * (`material.corridorMaskFrame` maps world into it). A point is hidden when its
+ * projection onto the nearest of its grid cell's candidate segments has
+ * `band[0] <= offset <= band[1]` and `band[2] <= station <= band[3]` (offset
+ * negative on the left). The app builds it (SkyGIS
+ * `app/src/lib/clearance/sourceMask.ts`).
+ */
+export interface ICorridorMask {
+  /** Local XY of the grid's lower-left corner. */
+  cellOrigin: [number, number];
+  cellSize: number;
+  nx: number;
+  ny: number;
+  /** 2 floats a cell (row-major): candidate start, count (0 = nothing hidden there). */
+  cells: Float32Array;
+  /** Segment indices; at most `CORRIDOR_MASK_MAX_CANDIDATES` a cell. */
+  candidates: Float32Array;
+  /** 8 floats a segment: ax, ay, bx, by, station at a, length, 0, 0. */
+  segments: Float32Array;
+  /** offsetFrom, offsetTo, stationFrom, stationTo. */
+  band: [number, number, number, number];
+}
+/** SKYGIS FORK: the shader's candidate loop bound (`corridor_max_candidates`). */
+export declare const CORRIDOR_MASK_MAX_CANDIDATES = 32;
 /** SKYGIS FORK: size of the `customScalarClassColors` uniform array (pointcloud.vert). */
 export declare const CUSTOM_SCALAR_CLASS_SLOTS = 4;
 export declare class PointCloudMaterial extends RawShaderMaterial {
@@ -182,6 +216,30 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
    */
   get customScalarRgbBelow(): number | null;
   set customScalarRgbBelow(value: number | null);
+  private _corridorMask;
+  /** Textures this material made for its mask (a pick material borrows them: empty). */
+  private corridorMaskTextures;
+  /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
+   * World → the mask's local frame. Composed with each node's world matrix on
+   * the CPU (float64) before upload, so UTM-scale coordinates keep their
+   * precision. Mutate it in place or assign a new one; no recompile.
+   */
+  corridorMaskFrame: Matrix4;
+  /**
+   * SKYGIS FORK (see SKYGIS.md) — not in upstream pnext/three-loader.
+   *
+   * Hide the points inside a footprint along a polyline (`ICorridorMask`).
+   * `null` (the default) turns it off. Setting it uploads three small data
+   * textures; only a change between null and a mask recompiles the shader.
+   */
+  get corridorMask(): ICorridorMask | null;
+  set corridorMask(mask: ICorridorMask | null);
+  /** Use `other`'s mask and frame without owning its textures (the pick material). */
+  shareCorridorMask(other: PointCloudMaterial): void;
+  private applyCorridorMask;
+  private disposeCorridorMaskTextures;
   useClipBox: boolean;
   weighted: boolean;
   pointColorType: PointColorType;

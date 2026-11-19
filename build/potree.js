@@ -44,7 +44,7 @@
         245: (A, g, I) => {
           I.d(g, { A: () => B });
           const B =
-            "precision highp float;\nprecision highp int;\n\n#define max_clip_boxes 30\n\nin vec3 position;\nin vec3 color;\n\n#ifdef color_rgba\n\tin vec4 rgba;\n#endif\n\nin vec3 normal;\nin float intensity;\nin float classification;\nin float returnNumber;\nin float numberOfReturns;\nin float pointSourceID;\nin vec4 indices;\nin vec2 uv;\n\n#ifdef color_type_custom_scalar\nin float CUSTOM_ATTRIBUTE_NAME;\n#endif\n\nuniform mat4 modelMatrix;\nuniform mat4 modelViewMatrix;\nuniform mat4 projectionMatrix;\nuniform mat4 viewMatrix;\nuniform mat3 normalMatrix;\n\nuniform float pcIndex;\n\nuniform float screenWidth;\nuniform float screenHeight;\nuniform float fov;\nuniform float spacing;\n\n#if defined use_clip_box\n\tuniform mat4 clipBoxes[max_clip_boxes];\n#endif\n\nuniform float heightMin;\nuniform float heightMax;\nuniform float size; // pixel size factor\nuniform float minSize; // minimum pixel size\nuniform float maxSize; // maximum pixel size\nuniform float octreeSize;\nuniform vec3 bbSize;\nuniform vec3 uColor;\nuniform float opacity;\nuniform float clipBoxCount;\nuniform float level;\nuniform float vnStart;\nuniform bool isLeafNode;\n\nuniform float filterByNormalThreshold;\nuniform vec2 intensityRange;\nuniform vec2 customScalarRange;\n// SKYGIS FORK (see SKYGIS.md): PointCloudMaterial.customScalarClassColors.\n// rgb + class id (w < 0 = unused slot); CUSTOM_SCALAR_CLASS_SLOTS entries.\nuniform vec4 customScalarClassColors[4];\n// SKYGIS FORK: PointCloudMaterial.customScalarRgbBelow — x > 0.5 = on, y = the\n// value at or below which a point draws its own RGB instead of the gradient.\nuniform vec2 customScalarRgbBelow;\nuniform float opacityAttenuation;\nuniform float intensityGamma;\nuniform float intensityContrast;\nuniform float intensityBrightness;\nuniform float rgbGamma;\nuniform float rgbContrast;\nuniform float rgbBrightness;\nuniform float transition;\nuniform float wRGB;\nuniform float wIntensity;\nuniform float wElevation;\nuniform float wClassification;\nuniform float wReturnNumber;\nuniform float wSourceID;\n\nuniform bool renderDepth;\n\nuniform sampler2D visibleNodes;\nuniform sampler2D gradient;\nuniform sampler2D classificationLUT;\nuniform sampler2D depthMap;\n\n#ifdef use_texture_blending\n\tuniform sampler2D backgroundMap;\n#endif\n\n#ifdef use_point_cloud_mixing\n\tuniform int pointCloudMixingMode;\n\tuniform float pointCloudID;\n\n\tuniform float pointCloudMixAngle;\n\tuniform float stripeDistanceX;\n\tuniform float stripeDistanceY;\n\n\tuniform float stripeDivisorX;\n\tuniform float stripeDivisorY;\n#endif\n\n#ifdef highlight_point\n\tuniform vec3 highlightedPointCoordinate;\n\tuniform bool enablePointHighlighting;\n\tuniform float highlightedPointScale;\n#endif\n\n#ifdef use_filter_by_normal\n\tuniform int normalFilteringMode;\n#endif\n\n#ifdef use_filter_by_classification\n\tuniform bool classificationFilter[256];\n#endif\n\nout vec3 vColor;\n\n#if !defined(color_type_point_index)\n\tout float vOpacity;\n#endif\n\n#if defined(weighted_splats)\n\tout float vLinearDepth;\n#endif\n\n#if !defined(paraboloid_point_shape) && defined(use_edl)\n\tout float vLogDepth;\n#endif\n\n#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0) || defined(paraboloid_point_shape)\n\tout vec3 vViewPosition;\n#endif\n\n#if defined(weighted_splats) || defined(paraboloid_point_shape)\n\tout float vRadius;\n#endif\n\n#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0)\n\tout vec3 vNormal;\n#endif\n\n#ifdef highlight_point\n\tout float vHighlight;\n#endif\n\n// ---------------------\n// OCTREE\n// ---------------------\n\n#if (defined(adaptive_point_size) || defined(color_type_lod)) && defined(tree_type_octree)\n\n/**\n * Rounds the specified number to the closest integer.\n */\nfloat safeRound(float number){\n\treturn floor(number + 0.5);\n}\n\n/**\n * Gets the number of 1-bits up to inclusive index position.\n *\n * number is treated as if it were an integer in the range 0-255\n */\nint numberOfOnes(int number, int index) {\n\tint numOnes = 0;\n\tint tmp = 128;\n\tfor (int i = 7; i >= 0; i--) {\n\n\t\tif (number >= tmp) {\n\t\t\tnumber = number - tmp;\n\n\t\t\tif (i <= index) {\n\t\t\t\tnumOnes++;\n\t\t\t}\n\t\t}\n\n\t\ttmp = tmp / 2;\n\t}\n\n\treturn numOnes;\n}\n\n/**\n * Checks whether the bit at index is 1.0\n *\n * number is treated as if it were an integer in the range 0-255\n */\nbool isBitSet(int number, int index){\n\n\t// weird multi else if due to lack of proper array, int and bitwise support in WebGL 1.0\n\tint powi = 1;\n\tif (index == 0) {\n\t\tpowi = 1;\n\t} else if (index == 1) {\n\t\tpowi = 2;\n\t} else if (index == 2) {\n\t\tpowi = 4;\n\t} else if (index == 3) {\n\t\tpowi = 8;\n\t} else if (index == 4) {\n\t\tpowi = 16;\n\t} else if (index == 5) {\n\t\tpowi = 32;\n\t} else if (index == 6) {\n\t\tpowi = 64;\n\t} else if (index == 7) {\n\t\tpowi = 128;\n\t}\n\n\tint ndp = number / powi;\n\n\treturn mod(float(ndp), 2.0) != 0.0;\n}\n\n/**\n * Gets the the LOD at the point position.\n */\nfloat getLOD() {\n\tvec3 offset = vec3(0.0, 0.0, 0.0);\n\tint iOffset = int(vnStart);\n\tfloat depth = level;\n\n\tfor (float i = 0.0; i <= 30.0; i++) {\n\t\tfloat nodeSizeAtLevel = octreeSize  / pow(2.0, i + level + 0.0);\n\n\t\tvec3 index3d = (position-offset) / nodeSizeAtLevel;\n\t\tindex3d = floor(index3d + 0.5);\n\t\tint index = int(safeRound(4.0 * index3d.x + 2.0 * index3d.y + index3d.z));\n\n\t\tvec4 value = texture(visibleNodes, vec2(float(iOffset) / 2048.0, 0.0));\n\t\tint mask = int(safeRound(value.r * 255.0));\n\n\t\tif (isBitSet(mask, index)) {\n\t\t\t// there are more visible child nodes at this position\n\t\t\tint advanceG = int(safeRound(value.g * 255.0)) * 256;\n\t\t\tint advanceB = int(safeRound(value.b * 255.0));\n\t\t\tint advanceChild = numberOfOnes(mask, index - 1);\n\t\t\tint advance = advanceG + advanceB + advanceChild;\n\n\t\t\tiOffset = iOffset + advance;\n\n\t\t\tdepth++;\n\t\t} else {\n\t\t\treturn value.a * 255.0; // no more visible child nodes at this position\n\t\t}\n\n\t\toffset = offset + (vec3(1.0, 1.0, 1.0) * nodeSizeAtLevel * 0.5) * index3d;\n\t}\n\n\treturn depth;\n}\n\nfloat getPointSizeAttenuation() {\n\treturn 0.5 * pow(2.0, getLOD());\n}\n\n#endif\n\n// ---------------------\n// KD-TREE\n// ---------------------\n\n#if (defined(adaptive_point_size) || defined(color_type_lod)) && defined(tree_type_kdtree)\n\nfloat getLOD() {\n\tvec3 offset = vec3(0.0, 0.0, 0.0);\n\tfloat intOffset = 0.0;\n\tfloat depth = 0.0;\n\n\tvec3 size = bbSize;\n\tvec3 pos = position;\n\n\tfor (float i = 0.0; i <= 1000.0; i++) {\n\n\t\tvec4 value = texture(visibleNodes, vec2(intOffset / 2048.0, 0.0));\n\n\t\tint children = int(value.r * 255.0);\n\t\tfloat next = value.g * 255.0;\n\t\tint split = int(value.b * 255.0);\n\n\t\tif (next == 0.0) {\n\t\t \treturn depth;\n\t\t}\n\n\t\tvec3 splitv = vec3(0.0, 0.0, 0.0);\n\t\tif (split == 1) {\n\t\t\tsplitv.x = 1.0;\n\t\t} else if (split == 2) {\n\t\t \tsplitv.y = 1.0;\n\t\t} else if (split == 4) {\n\t\t \tsplitv.z = 1.0;\n\t\t}\n\n\t\tintOffset = intOffset + next;\n\n\t\tfloat factor = length(pos * splitv / size);\n\t\tif (factor < 0.5) {\n\t\t \t// left\n\t\t\tif (children == 0 || children == 2) {\n\t\t\t\treturn depth;\n\t\t\t}\n\t\t} else {\n\t\t\t// right\n\t\t\tpos = pos - size * splitv * 0.5;\n\t\t\tif (children == 0 || children == 1) {\n\t\t\t\treturn depth;\n\t\t\t}\n\t\t\tif (children == 3) {\n\t\t\t\tintOffset = intOffset + 1.0;\n\t\t\t}\n\t\t}\n\t\tsize = size * ((1.0 - (splitv + 1.0) / 2.0) + 0.5);\n\n\t\tdepth++;\n\t}\n\n\n\treturn depth;\n}\n\nfloat getPointSizeAttenuation() {\n\treturn 0.5 * pow(1.3, getLOD());\n}\n\n#endif\n\n// formula adapted from: http://www.dfstudios.co.uk/articles/programming/image-programming-algorithms/image-processing-algorithms-part-5-contrast-adjustment/\nfloat getContrastFactor(float contrast) {\n\treturn (1.0158730158730156 * (contrast + 1.0)) / (1.0158730158730156 - contrast);\n}\n\nvec3 getRGB() {\n\t\n\t#ifdef color_rgba\n\t\tvec3 rgb = rgba.rgb;\n\t#else\t\n\t\tvec3 rgb = color;\n\t#endif\t\t\n\n\t#if defined(use_rgb_gamma_contrast_brightness)\n\t\trgb = pow(rgb, vec3(rgbGamma));\n\t\trgb = rgb + rgbBrightness;\n\t\trgb = (rgb - 0.5) * getContrastFactor(rgbContrast) + 0.5;\n\t\trgb = clamp(rgb, 0.0, 1.0);\n\t\treturn rgb;\n\t#else\n\t\treturn rgb;\n\t#endif\n}\n\nfloat getIntensity() {\n\tfloat w = (intensity - intensityRange.x) / (intensityRange.y - intensityRange.x);\n\tw = pow(w, intensityGamma);\n\tw = w + intensityBrightness;\n\tw = (w - 0.5) * getContrastFactor(intensityContrast) + 0.5;\n\tw = clamp(w, 0.0, 1.0);\n\n\treturn w;\n}\n\nvec3 getElevation() {\n\tvec4 world = modelMatrix * vec4( position, 1.0 );\n\tfloat w = (world.z - heightMin) / (heightMax-heightMin);\n\tvec3 cElevation = texture(gradient, vec2(w,1.0-w)).rgb;\n\n\treturn cElevation;\n}\n\n#ifdef color_type_custom_scalar\nvec3 getCustomScalar() {\n\t// SKYGIS FORK: chosen classes override the gradient (customScalarClassColors).\n\tfor (int i = 0; i < 4; i++) {\n\t\tif (customScalarClassColors[i].w >= 0.0 && abs(classification - customScalarClassColors[i].w) < 0.5) {\n\t\t\treturn customScalarClassColors[i].rgb;\n\t\t}\n\t}\n\t// SKYGIS FORK: at or below the threshold (or NaN, i.e. unscored), the point's own RGB.\n\t// NaN is tested by its bits: a GPU compiler may rewrite `!(v > y)` as `v <= y`,\n\t// which is false for NaN, and the unscored points then fell to the gradient's\n\t// grey end (2026-10-29, the clearance corridor's outer edges).\n\tfloat rgbBelowValue = CUSTOM_ATTRIBUTE_NAME;\n\tbool rgbBelowNan = (floatBitsToUint(rgbBelowValue) & 0x7fffffffu) > 0x7f800000u;\n\tif (customScalarRgbBelow.x > 0.5 && (rgbBelowNan || rgbBelowValue <= customScalarRgbBelow.y)) {\n\t\treturn getRGB();\n\t}\n\tfloat w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);\n\tw = clamp(w, 0.0, 1.0);\n\treturn texture(gradient, vec2(w, 1.0 - w)).rgb;\n}\n#endif\n\nvec4 getClassification() {\n\tvec2 uv = vec2(classification / 255.0, 0.5);\n\tvec4 classColor = texture(classificationLUT, uv);\n\n\treturn classColor;\n}\n\nvec3 getReturnNumber() {\n\tif (numberOfReturns == 1.0) {\n\t\treturn vec3(1.0, 1.0, 0.0);\n\t} else {\n\t\tif (returnNumber == 1.0) {\n\t\t\treturn vec3(1.0, 0.0, 0.0);\n\t\t} else if (returnNumber == numberOfReturns) {\n\t\t\treturn vec3(0.0, 0.0, 1.0);\n\t\t} else {\n\t\t\treturn vec3(0.0, 1.0, 0.0);\n\t\t}\n\t}\n}\n\nvec3 getSourceID() {\n\tfloat w = mod(pointSourceID, 10.0) / 10.0;\n\treturn texture(gradient, vec2(w, 1.0 - w)).rgb;\n}\n\nvec3 getCompositeColor() {\n\tvec3 c;\n\tfloat w;\n\n\tc += wRGB * getRGB();\n\tw += wRGB;\n\n\tc += wIntensity * getIntensity() * vec3(1.0, 1.0, 1.0);\n\tw += wIntensity;\n\n\tc += wElevation * getElevation();\n\tw += wElevation;\n\n\tc += wReturnNumber * getReturnNumber();\n\tw += wReturnNumber;\n\n\tc += wSourceID * getSourceID();\n\tw += wSourceID;\n\n\tvec4 cl = wClassification * getClassification();\n\tc += cl.a * cl.rgb;\n\tw += wClassification * cl.a;\n\n\tc = c / w;\n\n\tif (w == 0.0) {\n\t\tgl_Position = vec4(100.0, 100.0, 100.0, 0.0);\n\t}\n\n\treturn c;\n}\n\nvoid main() {\n\tvec4 mvPosition = modelViewMatrix * vec4(position, 1.0);\n\n\tgl_Position = projectionMatrix * mvPosition;\n\n\t#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0) || defined(paraboloid_point_shape)\n\t\tvViewPosition = mvPosition.xyz;\n\t#endif\n\n\t#if defined weighted_splats\n\t\tvLinearDepth = gl_Position.w;\n\t#endif\n\n\t#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0)\n\t\tvNormal = normalize(normalMatrix * normal);\n\t#endif\n\n\t#if !defined(paraboloid_point_shape) && defined(use_edl)\n\t\tvLogDepth = log2(-mvPosition.z);\n\t#endif\n\n\t// ---------------------\n\t// POINT SIZE\n\t// ---------------------\n\n\tfloat pointSize = 1.0;\n\tfloat slope = tan(fov / 2.0);\n\tfloat projFactor =  -0.5 * screenHeight / (slope * mvPosition.z);\n\n\t#if defined fixed_point_size\n\t\tpointSize = size;\n\t#elif defined attenuated_point_size\n\t\tpointSize = size * spacing * projFactor;\n\t#elif defined adaptive_point_size\n\t\tfloat worldSpaceSize = 2.0 * size * spacing / getPointSizeAttenuation();\n\t\tpointSize = worldSpaceSize * projFactor;\n\t#endif\n\n\tpointSize = max(minSize, pointSize);\n\tpointSize = min(maxSize, pointSize);\n\n\t#if defined(weighted_splats) || defined(paraboloid_point_shape)\n\t\tvRadius = pointSize / projFactor;\n\t#endif\n\n\tgl_PointSize = pointSize;\n\n\t// ---------------------\n\t// HIGHLIGHTING\n\t// ---------------------\n\n\t#ifdef highlight_point\n\t\tvec4 mPosition = modelMatrix * vec4(position, 1.0);\n\t\tif (enablePointHighlighting && abs(mPosition.x - highlightedPointCoordinate.x) < 0.0001 &&\n\t\t\tabs(mPosition.y - highlightedPointCoordinate.y) < 0.0001 &&\n\t\t\tabs(mPosition.z - highlightedPointCoordinate.z) < 0.0001) {\n\t\t\tvHighlight = 1.0;\n\t\t\tgl_PointSize = pointSize * highlightedPointScale;\n\t\t} else {\n\t\t\tvHighlight = 0.0;\n\t\t}\n\t#endif\n\n\t// ---------------------\n\t// OPACITY\n\t// ---------------------\n\n\t#ifndef color_type_point_index\n\t\t#ifdef attenuated_opacity\n\t\t\tvOpacity = opacity * exp(-length(-mvPosition.xyz) / opacityAttenuation);\n\t\t#else\n\t\t\tvOpacity = opacity;\n\t\t#endif\n\t#endif\n\n\t// ---------------------\n\t// FILTERING\n\t// ---------------------\n\n\t#ifdef use_filter_by_normal\n\t\tbool discardPoint = false;\n\t\t// Absolute normal filtering\n\t\tif (normalFilteringMode == 1) {\n\t\t\tdiscardPoint = (abs((modelViewMatrix * vec4(normal, 0.0)).z) > filterByNormalThreshold);\n\t\t}\n\t\t// less than equal to\n\t\telse if (normalFilteringMode == 2) {\n\t\t\tdiscardPoint = (modelViewMatrix * vec4(normal, 0.0)).z <= filterByNormalThreshold;\n\t\t\t}\n\t\t// greater than\n\t\telse if(normalFilteringMode == 3) {\n\t\t\tdiscardPoint = (modelViewMatrix * vec4(normal, 0.0)).z > filterByNormalThreshold;\n\t\t\t}\n\n\t\tif (discardPoint)\n\t\t{\n\t\t\tgl_Position = vec4(0.0, 0.0, 2.0, 1.0);\n\t\t}\n\t#endif\n\n\t#ifdef use_filter_by_classification\n\t\n\t\tint classIndex = int(classification);\n\t\tbool discardPoint = !classificationFilter[classIndex];\n\n\t\tif (discardPoint) {\n\t\t\tgl_Position = vec4(0.0, 0.0, 2.0, 1.0);\n\t\t\treturn;\n\t\t}\n\n\n\n\t#endif\n\n\t// ---------------------\n\t// POINT COLOR\n\t// ---------------------\n\n\t#ifdef color_type_rgb\n\t\tvColor = getRGB();\n\t#elif defined color_type_height\n\t\tvColor = getElevation();\n\t#elif defined color_type_rgb_height\n\t\tvec3 cHeight = getElevation();\n\t\tvColor = (1.0 - transition) * getRGB() + transition * cHeight;\n\t#elif defined color_type_depth\n\t\tfloat linearDepth = -mvPosition.z ;\n\t\tfloat expDepth = (gl_Position.z / gl_Position.w) * 0.5 + 0.5;\n\t\tvColor = vec3(linearDepth, expDepth, 0.0);\n\t#elif defined color_type_intensity\n\t\tfloat w = getIntensity();\n\t\tvColor = vec3(w, w, w);\n\t#elif defined color_type_intensity_gradient\n\t\tfloat w = getIntensity();\n\t\tvColor = texture(gradient, vec2(w, 1.0 - w)).rgb;\n\t#elif defined color_type_color\n\t\tvColor = uColor;\n\t#elif defined color_type_lod\n\tfloat w = getLOD() / 10.0;\n\tvColor = texture(gradient, vec2(w, 1.0 - w)).rgb;\n\t#elif defined color_type_point_index\n\t\tvColor = indices.rgb;\n\t#elif defined color_type_classification\n\t  vec4 cl = getClassification();\n\t\tvColor = cl.rgb;\n\t#elif defined color_type_return_number\n\t\tvColor = getReturnNumber();\n\t#elif defined color_type_source\n\t\tvColor = getSourceID();\n\t#elif defined color_type_normal\n\t\tvColor = (modelMatrix * vec4(normal, 0.0)).xyz;\n\t#elif defined color_type_phong\n\t\tvColor = color;\n\t#elif defined color_type_composite\n\t\tvColor = getCompositeColor();\n\t#elif defined color_type_custom_scalar\n\t\tvColor = getCustomScalar();\n\t#endif\n\n\t#if !defined color_type_composite && defined color_type_classification\n\t\tif (cl.a == 0.0) {\n\t\t\tgl_Position = vec4(100.0, 100.0, 100.0, 0.0);\n\t\t\treturn;\n\t\t}\n\t#endif\n\n\t// ---------------------\n\t// CLIPPING\n\t// ---------------------\n\n\t#if defined use_clip_box\n\t\tbool insideAny = false;\n\t\tfor (int i = 0; i < max_clip_boxes; i++) {\n\t\t\tif (i == int(clipBoxCount)) {\n\t\t\t\tbreak;\n\t\t\t}\n\n\t\t\tvec4 clipPosition = clipBoxes[i] * modelMatrix * vec4(position, 1.0);\n\t\t\tbool inside = -0.5 <= clipPosition.x && clipPosition.x <= 0.5;\n\t\t\tinside = inside && -0.5 <= clipPosition.y && clipPosition.y <= 0.5;\n\t\t\tinside = inside && -0.5 <= clipPosition.z && clipPosition.z <= 0.5;\n\t\t\tinsideAny = insideAny || inside;\n\t\t}\n\n\t\tif (!insideAny) {\n\t\t\t#if defined clip_outside\n\t\t\t\tgl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);\n\t\t\t#elif defined clip_highlight_inside && !defined(color_type_depth)\n\t\t\t\tfloat c = (vColor.r + vColor.g + vColor.b) / 6.0;\n\t\t\t#endif\n\t\t} else {\n\t\t\t#if defined clip_highlight_inside\n\t\t\t\tvColor.r += 0.5;\n\t\t\t#elif defined clip_inside\n\t\t\t\tgl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);\n\t\t\t#endif\n\t\t}\n\t#endif\n\n\n\t// ---------------------\n\t// For Depth purposes\n\t// ---------------------\n\n\tif(renderDepth) {\n\t\tvColor = vec3(1. - gl_Position.z / gl_Position.w);\n\t}\n\n}\n";
+            "precision highp float;\nprecision highp int;\n\n#define max_clip_boxes 30\n\nin vec3 position;\nin vec3 color;\n\n#ifdef color_rgba\n\tin vec4 rgba;\n#endif\n\nin vec3 normal;\nin float intensity;\nin float classification;\nin float returnNumber;\nin float numberOfReturns;\nin float pointSourceID;\nin vec4 indices;\nin vec2 uv;\n\n#ifdef color_type_custom_scalar\nin float CUSTOM_ATTRIBUTE_NAME;\n#endif\n\nuniform mat4 modelMatrix;\nuniform mat4 modelViewMatrix;\nuniform mat4 projectionMatrix;\nuniform mat4 viewMatrix;\nuniform mat3 normalMatrix;\n\nuniform float pcIndex;\n\nuniform float screenWidth;\nuniform float screenHeight;\nuniform float fov;\nuniform float spacing;\n\n#if defined use_clip_box\n\tuniform mat4 clipBoxes[max_clip_boxes];\n#endif\n\nuniform float heightMin;\nuniform float heightMax;\nuniform float size; // pixel size factor\nuniform float minSize; // minimum pixel size\nuniform float maxSize; // maximum pixel size\nuniform float octreeSize;\nuniform vec3 bbSize;\nuniform vec3 uColor;\nuniform float opacity;\nuniform float clipBoxCount;\nuniform float level;\nuniform float vnStart;\nuniform bool isLeafNode;\n\nuniform float filterByNormalThreshold;\nuniform vec2 intensityRange;\nuniform vec2 customScalarRange;\n// SKYGIS FORK (see SKYGIS.md): PointCloudMaterial.customScalarClassColors.\n// rgb + class id (w < 0 = unused slot); CUSTOM_SCALAR_CLASS_SLOTS entries.\nuniform vec4 customScalarClassColors[4];\n// SKYGIS FORK: PointCloudMaterial.customScalarRgbBelow — x > 0.5 = on, y = the\n// value at or below which a point draws its own RGB instead of the gradient.\nuniform vec2 customScalarRgbBelow;\n\n// SKYGIS FORK: PointCloudMaterial.corridorMask (see SKYGIS.md). Hides points\n// whose (station, offset) on the nearest candidate segment of their grid cell\n// lies inside `corridorMaskBand` (offsetFrom, offsetTo, stationFrom, stationTo).\n#if defined use_corridor_mask\n\t#define corridor_max_candidates 32\n\t#define CORRIDOR_TEX_WIDTH 4096\n\tuniform mat4 corridorMaskMatrix;\n\tuniform highp sampler2D corridorMaskCells;\n\tuniform highp sampler2D corridorMaskCandidates;\n\tuniform highp sampler2D corridorMaskSegments;\n\tuniform vec4 corridorMaskGrid; // x0, y0, cell size, nx\n\tuniform float corridorMaskNy;\n\tuniform vec4 corridorMaskBand;\n\n\tvec4 corridorFetch(highp sampler2D tex, int idx) {\n\t\treturn texelFetch(tex, ivec2(idx % CORRIDOR_TEX_WIDTH, idx / CORRIDOR_TEX_WIDTH), 0);\n\t}\n\n\tbool corridorMaskHides() {\n\t\tvec2 p = (corridorMaskMatrix * vec4(position, 1.0)).xy;\n\t\tint i = int(floor((p.x - corridorMaskGrid.x) / corridorMaskGrid.z));\n\t\tint j = int(floor((p.y - corridorMaskGrid.y) / corridorMaskGrid.z));\n\t\tint nx = int(corridorMaskGrid.w);\n\t\tif (i < 0 || j < 0 || i >= nx || j >= int(corridorMaskNy)) {\n\t\t\treturn false;\n\t\t}\n\t\tvec2 cell = corridorFetch(corridorMaskCells, j * nx + i).xy;\n\t\tint start = int(cell.x);\n\t\tint count = int(cell.y);\n\t\tfloat bestDist = 1e30;\n\t\tfloat station = 0.0;\n\t\tfloat offset = 0.0;\n\t\tfor (int c = 0; c < corridor_max_candidates; c++) {\n\t\t\tif (c >= count) {\n\t\t\t\tbreak;\n\t\t\t}\n\t\t\tint s = int(corridorFetch(corridorMaskCandidates, start + c).x);\n\t\t\tvec4 ab = corridorFetch(corridorMaskSegments, s * 2);\n\t\t\tvec4 sl = corridorFetch(corridorMaskSegments, s * 2 + 1);\n\t\t\tvec2 d = ab.zw - ab.xy;\n\t\t\tvec2 ap = p - ab.xy;\n\t\t\tfloat t = clamp(dot(ap, d) / dot(d, d), 0.0, 1.0);\n\t\t\tfloat dist = length(ap - d * t);\n\t\t\tif (dist < bestDist) {\n\t\t\t\tbestDist = dist;\n\t\t\t\tstation = sl.x + sl.y * t;\n\t\t\t\toffset = (d.x * ap.y - d.y * ap.x) > 0.0 ? -dist : dist;\n\t\t\t}\n\t\t}\n\t\treturn count > 0\n\t\t\t&& offset >= corridorMaskBand.x && offset <= corridorMaskBand.y\n\t\t\t&& station >= corridorMaskBand.z && station <= corridorMaskBand.w;\n\t}\n#endif\nuniform float opacityAttenuation;\nuniform float intensityGamma;\nuniform float intensityContrast;\nuniform float intensityBrightness;\nuniform float rgbGamma;\nuniform float rgbContrast;\nuniform float rgbBrightness;\nuniform float transition;\nuniform float wRGB;\nuniform float wIntensity;\nuniform float wElevation;\nuniform float wClassification;\nuniform float wReturnNumber;\nuniform float wSourceID;\n\nuniform bool renderDepth;\n\nuniform sampler2D visibleNodes;\nuniform sampler2D gradient;\nuniform sampler2D classificationLUT;\nuniform sampler2D depthMap;\n\n#ifdef use_texture_blending\n\tuniform sampler2D backgroundMap;\n#endif\n\n#ifdef use_point_cloud_mixing\n\tuniform int pointCloudMixingMode;\n\tuniform float pointCloudID;\n\n\tuniform float pointCloudMixAngle;\n\tuniform float stripeDistanceX;\n\tuniform float stripeDistanceY;\n\n\tuniform float stripeDivisorX;\n\tuniform float stripeDivisorY;\n#endif\n\n#ifdef highlight_point\n\tuniform vec3 highlightedPointCoordinate;\n\tuniform bool enablePointHighlighting;\n\tuniform float highlightedPointScale;\n#endif\n\n#ifdef use_filter_by_normal\n\tuniform int normalFilteringMode;\n#endif\n\n#ifdef use_filter_by_classification\n\tuniform bool classificationFilter[256];\n#endif\n\nout vec3 vColor;\n\n#if !defined(color_type_point_index)\n\tout float vOpacity;\n#endif\n\n#if defined(weighted_splats)\n\tout float vLinearDepth;\n#endif\n\n#if !defined(paraboloid_point_shape) && defined(use_edl)\n\tout float vLogDepth;\n#endif\n\n#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0) || defined(paraboloid_point_shape)\n\tout vec3 vViewPosition;\n#endif\n\n#if defined(weighted_splats) || defined(paraboloid_point_shape)\n\tout float vRadius;\n#endif\n\n#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0)\n\tout vec3 vNormal;\n#endif\n\n#ifdef highlight_point\n\tout float vHighlight;\n#endif\n\n// ---------------------\n// OCTREE\n// ---------------------\n\n#if (defined(adaptive_point_size) || defined(color_type_lod)) && defined(tree_type_octree)\n\n/**\n * Rounds the specified number to the closest integer.\n */\nfloat safeRound(float number){\n\treturn floor(number + 0.5);\n}\n\n/**\n * Gets the number of 1-bits up to inclusive index position.\n *\n * number is treated as if it were an integer in the range 0-255\n */\nint numberOfOnes(int number, int index) {\n\tint numOnes = 0;\n\tint tmp = 128;\n\tfor (int i = 7; i >= 0; i--) {\n\n\t\tif (number >= tmp) {\n\t\t\tnumber = number - tmp;\n\n\t\t\tif (i <= index) {\n\t\t\t\tnumOnes++;\n\t\t\t}\n\t\t}\n\n\t\ttmp = tmp / 2;\n\t}\n\n\treturn numOnes;\n}\n\n/**\n * Checks whether the bit at index is 1.0\n *\n * number is treated as if it were an integer in the range 0-255\n */\nbool isBitSet(int number, int index){\n\n\t// weird multi else if due to lack of proper array, int and bitwise support in WebGL 1.0\n\tint powi = 1;\n\tif (index == 0) {\n\t\tpowi = 1;\n\t} else if (index == 1) {\n\t\tpowi = 2;\n\t} else if (index == 2) {\n\t\tpowi = 4;\n\t} else if (index == 3) {\n\t\tpowi = 8;\n\t} else if (index == 4) {\n\t\tpowi = 16;\n\t} else if (index == 5) {\n\t\tpowi = 32;\n\t} else if (index == 6) {\n\t\tpowi = 64;\n\t} else if (index == 7) {\n\t\tpowi = 128;\n\t}\n\n\tint ndp = number / powi;\n\n\treturn mod(float(ndp), 2.0) != 0.0;\n}\n\n/**\n * Gets the the LOD at the point position.\n */\nfloat getLOD() {\n\tvec3 offset = vec3(0.0, 0.0, 0.0);\n\tint iOffset = int(vnStart);\n\tfloat depth = level;\n\n\tfor (float i = 0.0; i <= 30.0; i++) {\n\t\tfloat nodeSizeAtLevel = octreeSize  / pow(2.0, i + level + 0.0);\n\n\t\tvec3 index3d = (position-offset) / nodeSizeAtLevel;\n\t\tindex3d = floor(index3d + 0.5);\n\t\tint index = int(safeRound(4.0 * index3d.x + 2.0 * index3d.y + index3d.z));\n\n\t\tvec4 value = texture(visibleNodes, vec2(float(iOffset) / 2048.0, 0.0));\n\t\tint mask = int(safeRound(value.r * 255.0));\n\n\t\tif (isBitSet(mask, index)) {\n\t\t\t// there are more visible child nodes at this position\n\t\t\tint advanceG = int(safeRound(value.g * 255.0)) * 256;\n\t\t\tint advanceB = int(safeRound(value.b * 255.0));\n\t\t\tint advanceChild = numberOfOnes(mask, index - 1);\n\t\t\tint advance = advanceG + advanceB + advanceChild;\n\n\t\t\tiOffset = iOffset + advance;\n\n\t\t\tdepth++;\n\t\t} else {\n\t\t\treturn value.a * 255.0; // no more visible child nodes at this position\n\t\t}\n\n\t\toffset = offset + (vec3(1.0, 1.0, 1.0) * nodeSizeAtLevel * 0.5) * index3d;\n\t}\n\n\treturn depth;\n}\n\nfloat getPointSizeAttenuation() {\n\treturn 0.5 * pow(2.0, getLOD());\n}\n\n#endif\n\n// ---------------------\n// KD-TREE\n// ---------------------\n\n#if (defined(adaptive_point_size) || defined(color_type_lod)) && defined(tree_type_kdtree)\n\nfloat getLOD() {\n\tvec3 offset = vec3(0.0, 0.0, 0.0);\n\tfloat intOffset = 0.0;\n\tfloat depth = 0.0;\n\n\tvec3 size = bbSize;\n\tvec3 pos = position;\n\n\tfor (float i = 0.0; i <= 1000.0; i++) {\n\n\t\tvec4 value = texture(visibleNodes, vec2(intOffset / 2048.0, 0.0));\n\n\t\tint children = int(value.r * 255.0);\n\t\tfloat next = value.g * 255.0;\n\t\tint split = int(value.b * 255.0);\n\n\t\tif (next == 0.0) {\n\t\t \treturn depth;\n\t\t}\n\n\t\tvec3 splitv = vec3(0.0, 0.0, 0.0);\n\t\tif (split == 1) {\n\t\t\tsplitv.x = 1.0;\n\t\t} else if (split == 2) {\n\t\t \tsplitv.y = 1.0;\n\t\t} else if (split == 4) {\n\t\t \tsplitv.z = 1.0;\n\t\t}\n\n\t\tintOffset = intOffset + next;\n\n\t\tfloat factor = length(pos * splitv / size);\n\t\tif (factor < 0.5) {\n\t\t \t// left\n\t\t\tif (children == 0 || children == 2) {\n\t\t\t\treturn depth;\n\t\t\t}\n\t\t} else {\n\t\t\t// right\n\t\t\tpos = pos - size * splitv * 0.5;\n\t\t\tif (children == 0 || children == 1) {\n\t\t\t\treturn depth;\n\t\t\t}\n\t\t\tif (children == 3) {\n\t\t\t\tintOffset = intOffset + 1.0;\n\t\t\t}\n\t\t}\n\t\tsize = size * ((1.0 - (splitv + 1.0) / 2.0) + 0.5);\n\n\t\tdepth++;\n\t}\n\n\n\treturn depth;\n}\n\nfloat getPointSizeAttenuation() {\n\treturn 0.5 * pow(1.3, getLOD());\n}\n\n#endif\n\n// formula adapted from: http://www.dfstudios.co.uk/articles/programming/image-programming-algorithms/image-processing-algorithms-part-5-contrast-adjustment/\nfloat getContrastFactor(float contrast) {\n\treturn (1.0158730158730156 * (contrast + 1.0)) / (1.0158730158730156 - contrast);\n}\n\nvec3 getRGB() {\n\t\n\t#ifdef color_rgba\n\t\tvec3 rgb = rgba.rgb;\n\t#else\t\n\t\tvec3 rgb = color;\n\t#endif\t\t\n\n\t#if defined(use_rgb_gamma_contrast_brightness)\n\t\trgb = pow(rgb, vec3(rgbGamma));\n\t\trgb = rgb + rgbBrightness;\n\t\trgb = (rgb - 0.5) * getContrastFactor(rgbContrast) + 0.5;\n\t\trgb = clamp(rgb, 0.0, 1.0);\n\t\treturn rgb;\n\t#else\n\t\treturn rgb;\n\t#endif\n}\n\nfloat getIntensity() {\n\tfloat w = (intensity - intensityRange.x) / (intensityRange.y - intensityRange.x);\n\tw = pow(w, intensityGamma);\n\tw = w + intensityBrightness;\n\tw = (w - 0.5) * getContrastFactor(intensityContrast) + 0.5;\n\tw = clamp(w, 0.0, 1.0);\n\n\treturn w;\n}\n\nvec3 getElevation() {\n\tvec4 world = modelMatrix * vec4( position, 1.0 );\n\tfloat w = (world.z - heightMin) / (heightMax-heightMin);\n\tvec3 cElevation = texture(gradient, vec2(w,1.0-w)).rgb;\n\n\treturn cElevation;\n}\n\n#ifdef color_type_custom_scalar\nvec3 getCustomScalar() {\n\t// SKYGIS FORK: chosen classes override the gradient (customScalarClassColors).\n\tfor (int i = 0; i < 4; i++) {\n\t\tif (customScalarClassColors[i].w >= 0.0 && abs(classification - customScalarClassColors[i].w) < 0.5) {\n\t\t\treturn customScalarClassColors[i].rgb;\n\t\t}\n\t}\n\t// SKYGIS FORK: at or below the threshold (or NaN, i.e. unscored), the point's own RGB.\n\t// NaN is tested by its bits: a GPU compiler may rewrite `!(v > y)` as `v <= y`,\n\t// which is false for NaN, and the unscored points then fell to the gradient's\n\t// grey end (2026-10-29, the clearance corridor's outer edges).\n\tfloat rgbBelowValue = CUSTOM_ATTRIBUTE_NAME;\n\tbool rgbBelowNan = (floatBitsToUint(rgbBelowValue) & 0x7fffffffu) > 0x7f800000u;\n\tif (customScalarRgbBelow.x > 0.5 && (rgbBelowNan || rgbBelowValue <= customScalarRgbBelow.y)) {\n\t\treturn getRGB();\n\t}\n\tfloat w = (CUSTOM_ATTRIBUTE_NAME - customScalarRange.x) / (customScalarRange.y - customScalarRange.x);\n\tw = clamp(w, 0.0, 1.0);\n\treturn texture(gradient, vec2(w, 1.0 - w)).rgb;\n}\n#endif\n\nvec4 getClassification() {\n\tvec2 uv = vec2(classification / 255.0, 0.5);\n\tvec4 classColor = texture(classificationLUT, uv);\n\n\treturn classColor;\n}\n\nvec3 getReturnNumber() {\n\tif (numberOfReturns == 1.0) {\n\t\treturn vec3(1.0, 1.0, 0.0);\n\t} else {\n\t\tif (returnNumber == 1.0) {\n\t\t\treturn vec3(1.0, 0.0, 0.0);\n\t\t} else if (returnNumber == numberOfReturns) {\n\t\t\treturn vec3(0.0, 0.0, 1.0);\n\t\t} else {\n\t\t\treturn vec3(0.0, 1.0, 0.0);\n\t\t}\n\t}\n}\n\nvec3 getSourceID() {\n\tfloat w = mod(pointSourceID, 10.0) / 10.0;\n\treturn texture(gradient, vec2(w, 1.0 - w)).rgb;\n}\n\nvec3 getCompositeColor() {\n\tvec3 c;\n\tfloat w;\n\n\tc += wRGB * getRGB();\n\tw += wRGB;\n\n\tc += wIntensity * getIntensity() * vec3(1.0, 1.0, 1.0);\n\tw += wIntensity;\n\n\tc += wElevation * getElevation();\n\tw += wElevation;\n\n\tc += wReturnNumber * getReturnNumber();\n\tw += wReturnNumber;\n\n\tc += wSourceID * getSourceID();\n\tw += wSourceID;\n\n\tvec4 cl = wClassification * getClassification();\n\tc += cl.a * cl.rgb;\n\tw += wClassification * cl.a;\n\n\tc = c / w;\n\n\tif (w == 0.0) {\n\t\tgl_Position = vec4(100.0, 100.0, 100.0, 0.0);\n\t}\n\n\treturn c;\n}\n\nvoid main() {\n\tvec4 mvPosition = modelViewMatrix * vec4(position, 1.0);\n\n\tgl_Position = projectionMatrix * mvPosition;\n\n\t#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0) || defined(paraboloid_point_shape)\n\t\tvViewPosition = mvPosition.xyz;\n\t#endif\n\n\t#if defined weighted_splats\n\t\tvLinearDepth = gl_Position.w;\n\t#endif\n\n\t#if defined(color_type_phong) && (MAX_POINT_LIGHTS > 0 || MAX_DIR_LIGHTS > 0)\n\t\tvNormal = normalize(normalMatrix * normal);\n\t#endif\n\n\t#if !defined(paraboloid_point_shape) && defined(use_edl)\n\t\tvLogDepth = log2(-mvPosition.z);\n\t#endif\n\n\t// ---------------------\n\t// POINT SIZE\n\t// ---------------------\n\n\tfloat pointSize = 1.0;\n\tfloat slope = tan(fov / 2.0);\n\tfloat projFactor =  -0.5 * screenHeight / (slope * mvPosition.z);\n\n\t#if defined fixed_point_size\n\t\tpointSize = size;\n\t#elif defined attenuated_point_size\n\t\tpointSize = size * spacing * projFactor;\n\t#elif defined adaptive_point_size\n\t\tfloat worldSpaceSize = 2.0 * size * spacing / getPointSizeAttenuation();\n\t\tpointSize = worldSpaceSize * projFactor;\n\t#endif\n\n\tpointSize = max(minSize, pointSize);\n\tpointSize = min(maxSize, pointSize);\n\n\t#if defined(weighted_splats) || defined(paraboloid_point_shape)\n\t\tvRadius = pointSize / projFactor;\n\t#endif\n\n\tgl_PointSize = pointSize;\n\n\t// ---------------------\n\t// HIGHLIGHTING\n\t// ---------------------\n\n\t#ifdef highlight_point\n\t\tvec4 mPosition = modelMatrix * vec4(position, 1.0);\n\t\tif (enablePointHighlighting && abs(mPosition.x - highlightedPointCoordinate.x) < 0.0001 &&\n\t\t\tabs(mPosition.y - highlightedPointCoordinate.y) < 0.0001 &&\n\t\t\tabs(mPosition.z - highlightedPointCoordinate.z) < 0.0001) {\n\t\t\tvHighlight = 1.0;\n\t\t\tgl_PointSize = pointSize * highlightedPointScale;\n\t\t} else {\n\t\t\tvHighlight = 0.0;\n\t\t}\n\t#endif\n\n\t// ---------------------\n\t// OPACITY\n\t// ---------------------\n\n\t#ifndef color_type_point_index\n\t\t#ifdef attenuated_opacity\n\t\t\tvOpacity = opacity * exp(-length(-mvPosition.xyz) / opacityAttenuation);\n\t\t#else\n\t\t\tvOpacity = opacity;\n\t\t#endif\n\t#endif\n\n\t// ---------------------\n\t// FILTERING\n\t// ---------------------\n\n\t#ifdef use_filter_by_normal\n\t\tbool discardPoint = false;\n\t\t// Absolute normal filtering\n\t\tif (normalFilteringMode == 1) {\n\t\t\tdiscardPoint = (abs((modelViewMatrix * vec4(normal, 0.0)).z) > filterByNormalThreshold);\n\t\t}\n\t\t// less than equal to\n\t\telse if (normalFilteringMode == 2) {\n\t\t\tdiscardPoint = (modelViewMatrix * vec4(normal, 0.0)).z <= filterByNormalThreshold;\n\t\t\t}\n\t\t// greater than\n\t\telse if(normalFilteringMode == 3) {\n\t\t\tdiscardPoint = (modelViewMatrix * vec4(normal, 0.0)).z > filterByNormalThreshold;\n\t\t\t}\n\n\t\tif (discardPoint)\n\t\t{\n\t\t\tgl_Position = vec4(0.0, 0.0, 2.0, 1.0);\n\t\t}\n\t#endif\n\n\t#ifdef use_filter_by_classification\n\t\n\t\tint classIndex = int(classification);\n\t\tbool discardPoint = !classificationFilter[classIndex];\n\n\t\tif (discardPoint) {\n\t\t\tgl_Position = vec4(0.0, 0.0, 2.0, 1.0);\n\t\t\treturn;\n\t\t}\n\n\n\n\t#endif\n\n\t// ---------------------\n\t// POINT COLOR\n\t// ---------------------\n\n\t#ifdef color_type_rgb\n\t\tvColor = getRGB();\n\t#elif defined color_type_height\n\t\tvColor = getElevation();\n\t#elif defined color_type_rgb_height\n\t\tvec3 cHeight = getElevation();\n\t\tvColor = (1.0 - transition) * getRGB() + transition * cHeight;\n\t#elif defined color_type_depth\n\t\tfloat linearDepth = -mvPosition.z ;\n\t\tfloat expDepth = (gl_Position.z / gl_Position.w) * 0.5 + 0.5;\n\t\tvColor = vec3(linearDepth, expDepth, 0.0);\n\t#elif defined color_type_intensity\n\t\tfloat w = getIntensity();\n\t\tvColor = vec3(w, w, w);\n\t#elif defined color_type_intensity_gradient\n\t\tfloat w = getIntensity();\n\t\tvColor = texture(gradient, vec2(w, 1.0 - w)).rgb;\n\t#elif defined color_type_color\n\t\tvColor = uColor;\n\t#elif defined color_type_lod\n\tfloat w = getLOD() / 10.0;\n\tvColor = texture(gradient, vec2(w, 1.0 - w)).rgb;\n\t#elif defined color_type_point_index\n\t\tvColor = indices.rgb;\n\t#elif defined color_type_classification\n\t  vec4 cl = getClassification();\n\t\tvColor = cl.rgb;\n\t#elif defined color_type_return_number\n\t\tvColor = getReturnNumber();\n\t#elif defined color_type_source\n\t\tvColor = getSourceID();\n\t#elif defined color_type_normal\n\t\tvColor = (modelMatrix * vec4(normal, 0.0)).xyz;\n\t#elif defined color_type_phong\n\t\tvColor = color;\n\t#elif defined color_type_composite\n\t\tvColor = getCompositeColor();\n\t#elif defined color_type_custom_scalar\n\t\tvColor = getCustomScalar();\n\t#endif\n\n\t#if !defined color_type_composite && defined color_type_classification\n\t\tif (cl.a == 0.0) {\n\t\t\tgl_Position = vec4(100.0, 100.0, 100.0, 0.0);\n\t\t\treturn;\n\t\t}\n\t#endif\n\n\t// ---------------------\n\t// CLIPPING\n\t// ---------------------\n\n\t#if defined use_clip_box\n\t\tbool insideAny = false;\n\t\tfor (int i = 0; i < max_clip_boxes; i++) {\n\t\t\tif (i == int(clipBoxCount)) {\n\t\t\t\tbreak;\n\t\t\t}\n\n\t\t\tvec4 clipPosition = clipBoxes[i] * modelMatrix * vec4(position, 1.0);\n\t\t\tbool inside = -0.5 <= clipPosition.x && clipPosition.x <= 0.5;\n\t\t\tinside = inside && -0.5 <= clipPosition.y && clipPosition.y <= 0.5;\n\t\t\tinside = inside && -0.5 <= clipPosition.z && clipPosition.z <= 0.5;\n\t\t\tinsideAny = insideAny || inside;\n\t\t}\n\n\t\tif (!insideAny) {\n\t\t\t#if defined clip_outside\n\t\t\t\tgl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);\n\t\t\t#elif defined clip_highlight_inside && !defined(color_type_depth)\n\t\t\t\tfloat c = (vColor.r + vColor.g + vColor.b) / 6.0;\n\t\t\t#endif\n\t\t} else {\n\t\t\t#if defined clip_highlight_inside\n\t\t\t\tvColor.r += 0.5;\n\t\t\t#elif defined clip_inside\n\t\t\t\tgl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);\n\t\t\t#endif\n\t\t}\n\t#endif\n\n\n\t#if defined use_corridor_mask\n\t\tif (corridorMaskHides()) {\n\t\t\tgl_Position = vec4(1000.0, 1000.0, 1000.0, 1.0);\n\t\t}\n\t#endif\n\n\t// ---------------------\n\t// For Depth purposes\n\t// ---------------------\n\n\tif(renderDepth) {\n\t\tvColor = vec3(1. - gl_Position.z / gl_Position.w);\n\t}\n\n}\n";
         },
         300: (A, g, I) => {
           I.d(g, { A: () => Q });
@@ -175,46 +175,47 @@
     var C = {};
     B.r(C),
       B.d(C, {
-        BinaryLoader: () => fA,
+        BinaryLoader: () => FA,
         BlurMaterial: () => s,
-        CUSTOM_SCALAR_CLASS_SLOTS: () => m,
+        CORRIDOR_MASK_MAX_CANDIDATES: () => m,
+        CUSTOM_SCALAR_CLASS_SLOTS: () => H,
         ClipMode: () => Q,
-        GRAYSCALE: () => N,
-        INFERNO: () => u,
-        LazNodeLoader: () => NA,
+        GRAYSCALE: () => u,
+        INFERNO: () => N,
+        LazNodeLoader: () => RA,
         NormalFilteringMode: () => n,
         PLASMA: () => F,
-        POINT_ATTRIBUTES: () => X,
-        POINT_ATTRIBUTE_TYPES: () => W,
-        PointAttributeName: () => V,
-        PointAttributes: () => $,
-        PointCloudMaterial: () => x,
+        POINT_ATTRIBUTES: () => $,
+        POINT_ATTRIBUTE_TYPES: () => X,
+        PointAttributeName: () => z,
+        PointAttributes: () => IA,
+        PointCloudMaterial: () => O,
         PointCloudMixingMode: () => r,
-        PointCloudOctree: () => aA,
-        PointCloudOctreeGeometry: () => QA,
-        PointCloudOctreeGeometryNode: () => CA,
-        PointCloudOctreeNode: () => EA,
-        PointCloudOctreePicker: () => eA,
-        PointCloudTree: () => oA,
+        PointCloudOctree: () => cA,
+        PointCloudOctreeGeometry: () => eA,
+        PointCloudOctreeGeometryNode: () => tA,
+        PointCloudOctreeNode: () => iA,
+        PointCloudOctreePicker: () => nA,
+        PointCloudTree: () => aA,
         PointColorType: () => o,
         PointOpacityType: () => i,
         PointShape: () => t,
         PointSizeType: () => E,
-        Potree: () => Ag,
-        QueueItem: () => _A,
+        Potree: () => Bg,
+        QueueItem: () => gg,
         RAINBOW: () => R,
         SPECTRAL: () => M,
-        SplatsMesh: () => rA,
+        SplatsMesh: () => DA,
         TreeType: () => e,
-        V1_LOADER: () => uA,
-        V2_LOADER: () => PA,
+        V1_LOADER: () => MA,
+        V2_LOADER: () => jA,
         VIRIDIS: () => S,
-        Version: () => dA,
+        Version: () => NA,
         YELLOW_GREEN: () => G,
         generateClassificationTexture: () => U,
-        generateDataTexture: () => L,
-        generateGradientTexture: () => p,
-        isLazAttributes: () => _,
+        generateDataTexture: () => p,
+        generateGradientTexture: () => L,
+        isLazAttributes: () => gA,
       });
     var Q,
       E,
@@ -300,11 +301,11 @@
         B = g.name;
       return I.length !== B.length ? I.length - B.length : I < B ? -1 : I > B ? 1 : 0;
     }
-    function y(A) {
+    function d(A) {
       if (200 !== A.status) throw Error('Response error');
       return A;
     }
-    function d(A) {
+    function y(A) {
       if (!A || 0 === A.byteLength) throw Error('Empty buffer');
       return A;
     }
@@ -322,11 +323,11 @@
         12: new a.Vector4(1, 1, 0, 1),
         DEFAULT: new a.Vector4(0.3, 0.6, 0.6, 0.5),
       },
-      N = [
+      u = [
         [0, new a.Color(0, 0, 0)],
         [1, new a.Color(1, 1, 1)],
       ],
-      u = [
+      N = [
         [0, new a.Color(0.077, 0.042, 0.206)],
         [0.1, new a.Color(0.225, 0.036, 0.388)],
         [0.2, new a.Color(0.373, 0.074, 0.432)],
@@ -400,7 +401,7 @@
         [0.9, new a.Color(0.7883, 0.9323, 0.4514)],
         [1, new a.Color(0.9804, 0.9804, 0.4314)],
       ];
-    function L(A, g, I) {
+    function p(A, g, I) {
       const B = A * g,
         C = new Uint8Array(4 * B),
         Q = Math.floor(255 * I.r),
@@ -410,7 +411,7 @@
       const e = new a.DataTexture(C, A, g, a.RGBAFormat);
       return (e.needsUpdate = !0), (e.magFilter = a.NearestFilter), e;
     }
-    function p(A) {
+    function L(A) {
       const g = 64,
         I = document.createElement('canvas');
       (I.width = g), (I.height = g);
@@ -451,20 +452,37 @@
           (C = A[t]) && (E = (Q < 3 ? C(E) : Q > 3 ? C(g, I, E) : C(g, I)) || E);
       return Q > 3 && E && Object.defineProperty(g, I, E), E;
     };
-    const m = 4,
-      K = { [e.OCTREE]: 'tree_type_octree', [e.KDTREE]: 'tree_type_kdtree' },
-      k = {
+    const m = 32,
+      K = 4096;
+    function k(A, g) {
+      const I = Math.max(1, Math.ceil(A.length / g)),
+        B = Math.ceil(I / K),
+        C = new Float32Array(K * B * g);
+      C.set(A);
+      const Q = 1 === g ? a.RedFormat : 2 === g ? a.RGFormat : a.RGBAFormat,
+        E = new a.DataTexture(C, K, B, Q, a.FloatType);
+      return (
+        (E.minFilter = a.NearestFilter),
+        (E.magFilter = a.NearestFilter),
+        (E.generateMipmaps = !1),
+        (E.needsUpdate = !0),
+        E
+      );
+    }
+    const H = 4,
+      J = { [e.OCTREE]: 'tree_type_octree', [e.KDTREE]: 'tree_type_kdtree' },
+      b = {
         [E.FIXED]: 'fixed_point_size',
         [E.ATTENUATED]: 'attenuated_point_size',
         [E.ADAPTIVE]: 'adaptive_point_size',
       },
-      H = { [i.ATTENUATED]: 'attenuated_opacity', [i.FIXED]: 'fixed_opacity' },
-      J = {
+      T = { [i.ATTENUATED]: 'attenuated_opacity', [i.FIXED]: 'fixed_opacity' },
+      x = {
         [t.SQUARE]: 'square_point_shape',
         [t.CIRCLE]: 'circle_point_shape',
         [t.PARABOLOID]: 'paraboloid_point_shape',
       },
-      b = {
+      v = {
         [o.RGB]: 'color_type_rgb',
         [o.COLOR]: 'color_type_color',
         [o.DEPTH]: 'color_type_depth',
@@ -482,7 +500,7 @@
         [o.COMPOSITE]: 'color_type_composite',
         [o.CUSTOM_SCALAR]: 'color_type_custom_scalar',
       },
-      T = {
+      q = {
         [Q.DISABLED]: 'clip_disabled',
         [Q.CLIP_OUTSIDE]: 'clip_outside',
         [Q.HIGHLIGHT_INSIDE]: 'clip_highlight_inside',
@@ -490,7 +508,7 @@
         [Q.CLIP_VERTICALLY]: 'clip_vertically',
         [Q.CLIP_INSIDE]: 'clip_inside',
       };
-    class x extends a.RawShaderMaterial {
+    class O extends a.RawShaderMaterial {
       get customScalarClassColors() {
         const A = {};
         for (const g of this.uniforms.customScalarClassColors.value)
@@ -498,9 +516,9 @@
         return A;
       }
       set customScalarClassColors(A) {
-        const g = Object.entries(A).slice(0, m),
+        const g = Object.entries(A).slice(0, H),
           I = { r: 0, g: 0, b: 0 };
-        (this.uniforms.customScalarClassColors.value = Array.from({ length: m }, (A, B) => {
+        (this.uniforms.customScalarClassColors.value = Array.from({ length: H }, (A, B) => {
           const C = g[B];
           return C
             ? (C[1].getRGB(I, a.SRGBColorSpace), new a.Vector4(I.r, I.g, I.b, Number(C[0])))
@@ -518,6 +536,52 @@
         (I === g[0] && B === g[1]) ||
           ((this.uniforms.customScalarRgbBelow.value = g), (this.uniformsNeedUpdate = !0));
       }
+      get corridorMask() {
+        return this._corridorMask;
+      }
+      set corridorMask(A) {
+        if (A === this._corridorMask) return;
+        const g = null !== this._corridorMask;
+        if ((this.disposeCorridorMaskTextures(), (this._corridorMask = A), A)) {
+          const g = k(A.cells, 2),
+            I = k(A.candidates, 1),
+            B = k(A.segments, 4);
+          (this.corridorMaskTextures = [g, I, B]), this.applyCorridorMask(A, g, I, B);
+        }
+        g !== (null !== A) && this.updateShaderSource(), (this.uniformsNeedUpdate = !0);
+      }
+      shareCorridorMask(A) {
+        const g = A._corridorMask;
+        if (((this.corridorMaskFrame = A.corridorMaskFrame), g === this._corridorMask)) return;
+        const I = null !== this._corridorMask;
+        if ((this.disposeCorridorMaskTextures(), (this._corridorMask = g), g)) {
+          const I = A.uniforms;
+          this.applyCorridorMask(
+            g,
+            I.corridorMaskCells.value,
+            I.corridorMaskCandidates.value,
+            I.corridorMaskSegments.value,
+          );
+        }
+        I !== (null !== g) && this.updateShaderSource(), (this.uniformsNeedUpdate = !0);
+      }
+      applyCorridorMask(A, g, I, B) {
+        const C = this.uniforms;
+        (C.corridorMaskCells.value = g),
+          (C.corridorMaskCandidates.value = I),
+          (C.corridorMaskSegments.value = B),
+          (C.corridorMaskGrid.value = [A.cellOrigin[0], A.cellOrigin[1], A.cellSize, A.nx]),
+          (C.corridorMaskNy.value = A.ny),
+          (C.corridorMaskBand.value = [...A.band]);
+      }
+      disposeCorridorMaskTextures() {
+        for (const A of this.corridorMaskTextures) A.dispose();
+        this.corridorMaskTextures = [];
+        const A = this.uniforms;
+        (A.corridorMaskCells.value = null),
+          (A.corridorMaskCandidates.value = null),
+          (A.corridorMaskSegments.value = null);
+      }
       constructor(A = {}) {
         super(),
           (this.useDrawingBufferSize = !1),
@@ -528,76 +592,86 @@
           (this.clipBoxes = []),
           (this.visibleNodeTextureOffsets = new Map()),
           (this._gradient = M),
-          (this.gradientTexture = p(this._gradient)),
+          (this.gradientTexture = L(this._gradient)),
           (this._classification = f),
           (this.classificationTexture = U(this._classification)),
           (this.uniforms = {
-            bbSize: v('fv', [0, 0, 0]),
-            blendDepthSupplement: v('f', 0),
-            blendHardness: v('f', 2),
-            classificationLUT: v('t', this.classificationTexture || new a.Texture()),
-            clipBoxCount: v('f', 0),
-            clipBoxes: v('Matrix4fv', []),
-            clipExtent: v('fv', [0, 0, 1, 1]),
-            depthMap: v('t', null),
-            diffuse: v('fv', [1, 1, 1]),
-            fov: v('f', 1),
-            gradient: v('t', this.gradientTexture || new a.Texture()),
-            heightMax: v('f', 1),
-            heightMin: v('f', 0),
-            intensityBrightness: v('f', 0),
-            intensityContrast: v('f', 0),
-            intensityGamma: v('f', 1),
-            intensityRange: v('fv', [0, 65e3]),
-            isLeafNode: v('b', 0),
-            level: v('f', 0),
-            maxSize: v('f', 50),
-            minSize: v('f', 1),
-            octreeSize: v('f', 0),
-            opacity: v('f', 1),
-            pcIndex: v('f', 0),
-            rgbBrightness: v('f', 0),
-            rgbContrast: v('f', 0),
-            rgbGamma: v('f', 1),
-            screenHeight: v('f', 1),
-            screenWidth: v('f', 1),
-            size: v('f', 1),
-            spacing: v('f', 1),
-            toModel: v('Matrix4f', []),
-            transition: v('f', 0.5),
-            uColor: v('c', new a.Color(16777215)),
-            visibleNodes: v('t', this.visibleNodesTexture || new a.Texture()),
-            vnStart: v('f', 0),
-            wClassification: v('f', 0),
-            wElevation: v('f', 0),
-            wIntensity: v('f', 0),
-            wReturnNumber: v('f', 0),
-            wRGB: v('f', 1),
-            wSourceID: v('f', 0),
-            opacityAttenuation: v('f', 1),
-            filterByNormalThreshold: v('f', 0),
-            classificationFilter: v('iv', new Array(256).fill(!1)),
-            highlightedPointCoordinate: v('fv', new a.Vector3()),
-            highlightedPointColor: v('fv', h.clone()),
-            enablePointHighlighting: v('b', !0),
-            highlightedPointScale: v('f', 2),
-            backgroundMap: v('t', null),
-            normalFilteringMode: v('i', n.ABSOLUTE_NORMAL_FILTERING_MODE),
-            pointCloudID: v('f', 2),
-            pointCloudMixingMode: v('i', r.CHECKBOARD),
-            stripeDistanceX: v('f', 5),
-            stripeDistanceY: v('f', 5),
-            stripeDivisorX: v('f', 2),
-            stripeDivisorY: v('f', 2),
-            pointCloudMixAngle: v('f', 31),
-            renderDepth: v('bool', !1),
-            customScalarRange: v('fv', [0, 1]),
-            customScalarClassColors: v(
+            bbSize: P('fv', [0, 0, 0]),
+            blendDepthSupplement: P('f', 0),
+            blendHardness: P('f', 2),
+            classificationLUT: P('t', this.classificationTexture || new a.Texture()),
+            clipBoxCount: P('f', 0),
+            clipBoxes: P('Matrix4fv', []),
+            clipExtent: P('fv', [0, 0, 1, 1]),
+            depthMap: P('t', null),
+            diffuse: P('fv', [1, 1, 1]),
+            fov: P('f', 1),
+            gradient: P('t', this.gradientTexture || new a.Texture()),
+            heightMax: P('f', 1),
+            heightMin: P('f', 0),
+            intensityBrightness: P('f', 0),
+            intensityContrast: P('f', 0),
+            intensityGamma: P('f', 1),
+            intensityRange: P('fv', [0, 65e3]),
+            isLeafNode: P('b', 0),
+            level: P('f', 0),
+            maxSize: P('f', 50),
+            minSize: P('f', 1),
+            octreeSize: P('f', 0),
+            opacity: P('f', 1),
+            pcIndex: P('f', 0),
+            rgbBrightness: P('f', 0),
+            rgbContrast: P('f', 0),
+            rgbGamma: P('f', 1),
+            screenHeight: P('f', 1),
+            screenWidth: P('f', 1),
+            size: P('f', 1),
+            spacing: P('f', 1),
+            toModel: P('Matrix4f', []),
+            transition: P('f', 0.5),
+            uColor: P('c', new a.Color(16777215)),
+            visibleNodes: P('t', this.visibleNodesTexture || new a.Texture()),
+            vnStart: P('f', 0),
+            wClassification: P('f', 0),
+            wElevation: P('f', 0),
+            wIntensity: P('f', 0),
+            wReturnNumber: P('f', 0),
+            wRGB: P('f', 1),
+            wSourceID: P('f', 0),
+            opacityAttenuation: P('f', 1),
+            filterByNormalThreshold: P('f', 0),
+            classificationFilter: P('iv', new Array(256).fill(!1)),
+            highlightedPointCoordinate: P('fv', new a.Vector3()),
+            highlightedPointColor: P('fv', h.clone()),
+            enablePointHighlighting: P('b', !0),
+            highlightedPointScale: P('f', 2),
+            backgroundMap: P('t', null),
+            normalFilteringMode: P('i', n.ABSOLUTE_NORMAL_FILTERING_MODE),
+            pointCloudID: P('f', 2),
+            pointCloudMixingMode: P('i', r.CHECKBOARD),
+            stripeDistanceX: P('f', 5),
+            stripeDistanceY: P('f', 5),
+            stripeDivisorX: P('f', 2),
+            stripeDivisorY: P('f', 2),
+            pointCloudMixAngle: P('f', 31),
+            renderDepth: P('bool', !1),
+            customScalarRange: P('fv', [0, 1]),
+            customScalarClassColors: P(
               'v4v',
-              Array.from({ length: m }, () => new a.Vector4(0, 0, 0, -1)),
+              Array.from({ length: H }, () => new a.Vector4(0, 0, 0, -1)),
             ),
-            customScalarRgbBelow: v('fv', [0, 0]),
+            customScalarRgbBelow: P('fv', [0, 0]),
+            corridorMaskMatrix: P('Matrix4fv', new a.Matrix4()),
+            corridorMaskCells: P('t', null),
+            corridorMaskCandidates: P('t', null),
+            corridorMaskSegments: P('t', null),
+            corridorMaskGrid: P('fv', [0, 0, 1, 0]),
+            corridorMaskNy: P('f', 0),
+            corridorMaskBand: P('fv', [0, 0, 0, 0]),
           }),
+          (this._corridorMask = null),
+          (this.corridorMaskTextures = []),
+          (this.corridorMaskFrame = new a.Matrix4()),
           (this.useClipBox = !1),
           (this.weighted = !1),
           (this.pointColorType = o.RGB),
@@ -625,14 +699,14 @@
             indices: { type: 'fv', value: [] },
           }),
           (this.glslVersion = a.GLSL3);
-        const g = (this.visibleNodesTexture = L(2048, 1, new a.Color(16777215)));
+        const g = (this.visibleNodesTexture = p(2048, 1, new a.Color(16777215)));
         (g.minFilter = a.NearestFilter),
           (g.magFilter = a.NearestFilter),
           this.setUniform('visibleNodes', g),
-          (this.treeType = q(A.treeType, e.OCTREE)),
-          (this.size = q(A.size, 1)),
-          (this.minSize = q(A.minSize, 2)),
-          (this.maxSize = q(A.maxSize, 50)),
+          (this.treeType = V(A.treeType, e.OCTREE)),
+          (this.size = V(A.size, 1)),
+          (this.minSize = V(A.minSize, 2)),
+          (this.maxSize = V(A.maxSize, 50)),
           (this.colorRgba = Boolean(A.colorRgba)),
           (this.classification = f),
           (this.defaultAttributeValues.normal = [0, 0, 0]),
@@ -649,6 +723,8 @@
           this.clearVisibleNodeTextureOffsets(),
           this.classificationTexture &&
             (this.classificationTexture.dispose(), (this.classificationTexture = void 0)),
+          this.disposeCorridorMaskTextures(),
+          (this._corridorMask = null),
           this.depthMap && (this.depthMap.dispose(), (this.depthMap = void 0)),
           this.backgroundMap && (this.backgroundMap.dispose(), (this.backgroundMap = void 0));
       }
@@ -684,14 +760,14 @@
           A && g.push(`#define ${A}`);
         }
         return (
-          I(K[this.treeType]),
-          I(k[this.pointSizeType]),
-          I(J[this.shape]),
-          I(b[this.pointColorType]),
+          I(J[this.treeType]),
+          I(b[this.pointSizeType]),
+          I(x[this.shape]),
+          I(v[this.pointColorType]),
           this.pointColorType === o.CUSTOM_SCALAR &&
             g.push(`#define CUSTOM_ATTRIBUTE_NAME ${this.customAttributeName}`),
-          I(T[this.clipMode]),
-          I(H[this.pointOpacityType]),
+          I(q[this.clipMode]),
+          I(T[this.pointOpacityType]),
           (1 === this.rgbGamma && 0 === this.rgbBrightness && 0 === this.rgbContrast) ||
             I('use_rgb_gamma_contrast_brightness'),
           this.useFilterByNormal && I('use_filter_by_normal'),
@@ -700,6 +776,7 @@
           this.weighted && I('weighted_splats'),
           this.numClipBoxes > 0 && I('use_clip_box'),
           this.highlightPoint && I('highlight_point'),
+          this._corridorMask && I('use_corridor_mask'),
           this.useTextureBlending && I('use_texture_blending'),
           this.usePointCloudMixing && I('use_point_cloud_mixing'),
           this.colorRgba && I('color_rgba'),
@@ -734,7 +811,7 @@
       set gradient(A) {
         this._gradient !== A &&
           ((this._gradient = A),
-          (this.gradientTexture = p(this._gradient)),
+          (this.gradientTexture = L(this._gradient)),
           this.setUniform('gradient', this.gradientTexture));
       }
       get classification() {
@@ -782,12 +859,12 @@
           : ((this.screenWidth = B.domElement.clientWidth * C),
             (this.screenHeight = B.domElement.clientHeight * C)),
           this.useDrawingBufferSize &&
-            (B.getDrawingBufferSize(x.helperVec2),
-            (this.screenWidth = x.helperVec2.width),
-            (this.screenHeight = x.helperVec2.height));
+            (B.getDrawingBufferSize(O.helperVec2),
+            (this.screenWidth = O.helperVec2.width),
+            (this.screenHeight = O.helperVec2.height));
         const t = Math.max(A.scale.x, A.scale.y, A.scale.z);
         (this.spacing = A.pcoGeometry.spacing * t),
-          (this.octreeSize = A.pcoGeometry.boundingBox.getSize(x.helperVec3).x),
+          (this.octreeSize = A.pcoGeometry.boundingBox.getSize(O.helperVec3).x),
           (this.pointSizeType !== E.ADAPTIVE && this.pointColorType !== o.LOD) ||
             this.updateVisibilityTextureData(g);
       }
@@ -819,17 +896,22 @@
           const o = e.visibleNodeTextureOffsets.get(g.name);
           void 0 !== o && (i.vnStart.value = o),
             (i.pcIndex.value = void 0 !== I ? I : A.visibleNodes.indexOf(g)),
+            e.corridorMask &&
+              i.corridorMaskMatrix.value.multiplyMatrices(
+                e.corridorMaskFrame,
+                g.sceneNode.matrixWorld,
+              ),
             (t.uniformsNeedUpdate = !0);
         };
       }
     }
-    function v(A, g) {
+    function P(A, g) {
       return { type: A, value: g };
     }
-    function q(A, g) {
+    function V(A, g) {
       return void 0 === A ? g : A;
     }
-    function O(A, g = !1) {
+    function W(A, g = !1) {
       return (I, B) => {
         Object.defineProperty(I, B, {
           get() {
@@ -841,7 +923,7 @@
         });
       };
     }
-    function P() {
+    function j() {
       return (A, g) => {
         const I = `_${g.toString()}`;
         Object.defineProperty(A, g, {
@@ -854,71 +936,71 @@
         });
       };
     }
-    var V;
-    (x.helperVec3 = new a.Vector3()),
-      (x.helperVec2 = new a.Vector2()),
-      Y([O('bbSize')], x.prototype, 'bbSize', void 0),
-      Y([O('clipExtent')], x.prototype, 'clipExtent', void 0),
-      Y([O('depthMap')], x.prototype, 'depthMap', void 0),
-      Y([O('fov')], x.prototype, 'fov', void 0),
-      Y([O('heightMax')], x.prototype, 'heightMax', void 0),
-      Y([O('heightMin')], x.prototype, 'heightMin', void 0),
-      Y([O('intensityBrightness')], x.prototype, 'intensityBrightness', void 0),
-      Y([O('intensityContrast')], x.prototype, 'intensityContrast', void 0),
-      Y([O('intensityGamma')], x.prototype, 'intensityGamma', void 0),
-      Y([O('intensityRange')], x.prototype, 'intensityRange', void 0),
-      Y([O('maxSize')], x.prototype, 'maxSize', void 0),
-      Y([O('minSize')], x.prototype, 'minSize', void 0),
-      Y([O('octreeSize')], x.prototype, 'octreeSize', void 0),
-      Y([O('opacity', !0)], x.prototype, 'opacity', void 0),
-      Y([O('rgbBrightness', !0)], x.prototype, 'rgbBrightness', void 0),
-      Y([O('rgbContrast', !0)], x.prototype, 'rgbContrast', void 0),
-      Y([O('rgbGamma', !0)], x.prototype, 'rgbGamma', void 0),
-      Y([O('screenHeight')], x.prototype, 'screenHeight', void 0),
-      Y([O('screenWidth')], x.prototype, 'screenWidth', void 0),
-      Y([O('size')], x.prototype, 'size', void 0),
-      Y([O('spacing')], x.prototype, 'spacing', void 0),
-      Y([O('transition')], x.prototype, 'transition', void 0),
-      Y([O('uColor')], x.prototype, 'color', void 0),
-      Y([O('wClassification')], x.prototype, 'weightClassification', void 0),
-      Y([O('wElevation')], x.prototype, 'weightElevation', void 0),
-      Y([O('wIntensity')], x.prototype, 'weightIntensity', void 0),
-      Y([O('wReturnNumber')], x.prototype, 'weightReturnNumber', void 0),
-      Y([O('wRGB')], x.prototype, 'weightRGB', void 0),
-      Y([O('wSourceID')], x.prototype, 'weightSourceID', void 0),
-      Y([O('opacityAttenuation')], x.prototype, 'opacityAttenuation', void 0),
-      Y([O('filterByNormalThreshold')], x.prototype, 'filterByNormalThreshold', void 0),
-      Y([O('classificationFilter')], x.prototype, 'classificationFilter', void 0),
-      Y([O('highlightedPointCoordinate')], x.prototype, 'highlightedPointCoordinate', void 0),
-      Y([O('highlightedPointColor')], x.prototype, 'highlightedPointColor', void 0),
-      Y([O('enablePointHighlighting')], x.prototype, 'enablePointHighlighting', void 0),
-      Y([O('highlightedPointScale')], x.prototype, 'highlightedPointScale', void 0),
-      Y([O('normalFilteringMode')], x.prototype, 'normalFilteringMode', void 0),
-      Y([O('backgroundMap')], x.prototype, 'backgroundMap', void 0),
-      Y([O('pointCloudID')], x.prototype, 'pointCloudID', void 0),
-      Y([O('pointCloudMixingMode')], x.prototype, 'pointCloudMixingMode', void 0),
-      Y([O('stripeDistanceX')], x.prototype, 'stripeDistanceX', void 0),
-      Y([O('stripeDistanceY')], x.prototype, 'stripeDistanceY', void 0),
-      Y([O('stripeDivisorX')], x.prototype, 'stripeDivisorX', void 0),
-      Y([O('stripeDivisorY')], x.prototype, 'stripeDivisorY', void 0),
-      Y([O('pointCloudMixAngle')], x.prototype, 'pointCloudMixAngle', void 0),
-      Y([O('renderDepth')], x.prototype, 'renderDepth', void 0),
-      Y([O('customScalarRange')], x.prototype, 'customScalarRange', void 0),
-      Y([P()], x.prototype, 'useClipBox', void 0),
-      Y([P()], x.prototype, 'weighted', void 0),
-      Y([P()], x.prototype, 'pointColorType', void 0),
-      Y([P()], x.prototype, 'pointSizeType', void 0),
-      Y([P()], x.prototype, 'clipMode', void 0),
-      Y([P()], x.prototype, 'useEDL', void 0),
-      Y([P()], x.prototype, 'shape', void 0),
-      Y([P()], x.prototype, 'treeType', void 0),
-      Y([P()], x.prototype, 'pointOpacityType', void 0),
-      Y([P()], x.prototype, 'useFilterByNormal', void 0),
-      Y([P()], x.prototype, 'useFilterByClassification', void 0),
-      Y([P()], x.prototype, 'useTextureBlending', void 0),
-      Y([P()], x.prototype, 'usePointCloudMixing', void 0),
-      Y([P()], x.prototype, 'highlightPoint', void 0),
-      Y([P()], x.prototype, 'customAttributeName', void 0),
+    var z;
+    (O.helperVec3 = new a.Vector3()),
+      (O.helperVec2 = new a.Vector2()),
+      Y([W('bbSize')], O.prototype, 'bbSize', void 0),
+      Y([W('clipExtent')], O.prototype, 'clipExtent', void 0),
+      Y([W('depthMap')], O.prototype, 'depthMap', void 0),
+      Y([W('fov')], O.prototype, 'fov', void 0),
+      Y([W('heightMax')], O.prototype, 'heightMax', void 0),
+      Y([W('heightMin')], O.prototype, 'heightMin', void 0),
+      Y([W('intensityBrightness')], O.prototype, 'intensityBrightness', void 0),
+      Y([W('intensityContrast')], O.prototype, 'intensityContrast', void 0),
+      Y([W('intensityGamma')], O.prototype, 'intensityGamma', void 0),
+      Y([W('intensityRange')], O.prototype, 'intensityRange', void 0),
+      Y([W('maxSize')], O.prototype, 'maxSize', void 0),
+      Y([W('minSize')], O.prototype, 'minSize', void 0),
+      Y([W('octreeSize')], O.prototype, 'octreeSize', void 0),
+      Y([W('opacity', !0)], O.prototype, 'opacity', void 0),
+      Y([W('rgbBrightness', !0)], O.prototype, 'rgbBrightness', void 0),
+      Y([W('rgbContrast', !0)], O.prototype, 'rgbContrast', void 0),
+      Y([W('rgbGamma', !0)], O.prototype, 'rgbGamma', void 0),
+      Y([W('screenHeight')], O.prototype, 'screenHeight', void 0),
+      Y([W('screenWidth')], O.prototype, 'screenWidth', void 0),
+      Y([W('size')], O.prototype, 'size', void 0),
+      Y([W('spacing')], O.prototype, 'spacing', void 0),
+      Y([W('transition')], O.prototype, 'transition', void 0),
+      Y([W('uColor')], O.prototype, 'color', void 0),
+      Y([W('wClassification')], O.prototype, 'weightClassification', void 0),
+      Y([W('wElevation')], O.prototype, 'weightElevation', void 0),
+      Y([W('wIntensity')], O.prototype, 'weightIntensity', void 0),
+      Y([W('wReturnNumber')], O.prototype, 'weightReturnNumber', void 0),
+      Y([W('wRGB')], O.prototype, 'weightRGB', void 0),
+      Y([W('wSourceID')], O.prototype, 'weightSourceID', void 0),
+      Y([W('opacityAttenuation')], O.prototype, 'opacityAttenuation', void 0),
+      Y([W('filterByNormalThreshold')], O.prototype, 'filterByNormalThreshold', void 0),
+      Y([W('classificationFilter')], O.prototype, 'classificationFilter', void 0),
+      Y([W('highlightedPointCoordinate')], O.prototype, 'highlightedPointCoordinate', void 0),
+      Y([W('highlightedPointColor')], O.prototype, 'highlightedPointColor', void 0),
+      Y([W('enablePointHighlighting')], O.prototype, 'enablePointHighlighting', void 0),
+      Y([W('highlightedPointScale')], O.prototype, 'highlightedPointScale', void 0),
+      Y([W('normalFilteringMode')], O.prototype, 'normalFilteringMode', void 0),
+      Y([W('backgroundMap')], O.prototype, 'backgroundMap', void 0),
+      Y([W('pointCloudID')], O.prototype, 'pointCloudID', void 0),
+      Y([W('pointCloudMixingMode')], O.prototype, 'pointCloudMixingMode', void 0),
+      Y([W('stripeDistanceX')], O.prototype, 'stripeDistanceX', void 0),
+      Y([W('stripeDistanceY')], O.prototype, 'stripeDistanceY', void 0),
+      Y([W('stripeDivisorX')], O.prototype, 'stripeDivisorX', void 0),
+      Y([W('stripeDivisorY')], O.prototype, 'stripeDivisorY', void 0),
+      Y([W('pointCloudMixAngle')], O.prototype, 'pointCloudMixAngle', void 0),
+      Y([W('renderDepth')], O.prototype, 'renderDepth', void 0),
+      Y([W('customScalarRange')], O.prototype, 'customScalarRange', void 0),
+      Y([j()], O.prototype, 'useClipBox', void 0),
+      Y([j()], O.prototype, 'weighted', void 0),
+      Y([j()], O.prototype, 'pointColorType', void 0),
+      Y([j()], O.prototype, 'pointSizeType', void 0),
+      Y([j()], O.prototype, 'clipMode', void 0),
+      Y([j()], O.prototype, 'useEDL', void 0),
+      Y([j()], O.prototype, 'shape', void 0),
+      Y([j()], O.prototype, 'treeType', void 0),
+      Y([j()], O.prototype, 'pointOpacityType', void 0),
+      Y([j()], O.prototype, 'useFilterByNormal', void 0),
+      Y([j()], O.prototype, 'useFilterByClassification', void 0),
+      Y([j()], O.prototype, 'useTextureBlending', void 0),
+      Y([j()], O.prototype, 'usePointCloudMixing', void 0),
+      Y([j()], O.prototype, 'highlightPoint', void 0),
+      Y([j()], O.prototype, 'customAttributeName', void 0),
       (function (A) {
         (A[(A.POSITION_CARTESIAN = 0)] = 'POSITION_CARTESIAN'),
           (A[(A.COLOR_PACKED = 1)] = 'COLOR_PACKED'),
@@ -931,8 +1013,8 @@
           (A[(A.NORMAL_SPHEREMAPPED = 8)] = 'NORMAL_SPHEREMAPPED'),
           (A[(A.NORMAL_OCT16 = 9)] = 'NORMAL_OCT16'),
           (A[(A.NORMAL = 10)] = 'NORMAL');
-      })(V || (V = {}));
-    const W = {
+      })(z || (z = {}));
+    const X = {
       DATA_TYPE_DOUBLE: { ordinal: 0, size: 8 },
       DATA_TYPE_FLOAT: { ordinal: 1, size: 4 },
       DATA_TYPE_INT8: { ordinal: 2, size: 1 },
@@ -944,47 +1026,47 @@
       DATA_TYPE_INT64: { ordinal: 8, size: 8 },
       DATA_TYPE_UINT64: { ordinal: 9, size: 8 },
     };
-    function j(A, g, I) {
+    function Z(A, g, I) {
       return { name: A, type: g, numElements: I, byteSize: I * g.size };
     }
-    const z = j(V.COLOR_PACKED, W.DATA_TYPE_INT8, 4),
-      X = {
-        POSITION_CARTESIAN: j(V.POSITION_CARTESIAN, W.DATA_TYPE_FLOAT, 3),
-        RGBA_PACKED: z,
-        COLOR_PACKED: z,
-        RGB_PACKED: j(V.COLOR_PACKED, W.DATA_TYPE_INT8, 3),
-        NORMAL_FLOATS: j(V.NORMAL_FLOATS, W.DATA_TYPE_FLOAT, 3),
-        FILLER_1B: j(V.FILLER, W.DATA_TYPE_UINT8, 1),
-        INTENSITY: j(V.INTENSITY, W.DATA_TYPE_UINT16, 1),
-        CLASSIFICATION: j(V.CLASSIFICATION, W.DATA_TYPE_UINT8, 1),
-        NORMAL_SPHEREMAPPED: j(V.NORMAL_SPHEREMAPPED, W.DATA_TYPE_UINT8, 2),
-        NORMAL_OCT16: j(V.NORMAL_OCT16, W.DATA_TYPE_UINT8, 2),
-        NORMAL: j(V.NORMAL, W.DATA_TYPE_FLOAT, 3),
+    const _ = Z(z.COLOR_PACKED, X.DATA_TYPE_INT8, 4),
+      $ = {
+        POSITION_CARTESIAN: Z(z.POSITION_CARTESIAN, X.DATA_TYPE_FLOAT, 3),
+        RGBA_PACKED: _,
+        COLOR_PACKED: _,
+        RGB_PACKED: Z(z.COLOR_PACKED, X.DATA_TYPE_INT8, 3),
+        NORMAL_FLOATS: Z(z.NORMAL_FLOATS, X.DATA_TYPE_FLOAT, 3),
+        FILLER_1B: Z(z.FILLER, X.DATA_TYPE_UINT8, 1),
+        INTENSITY: Z(z.INTENSITY, X.DATA_TYPE_UINT16, 1),
+        CLASSIFICATION: Z(z.CLASSIFICATION, X.DATA_TYPE_UINT8, 1),
+        NORMAL_SPHEREMAPPED: Z(z.NORMAL_SPHEREMAPPED, X.DATA_TYPE_UINT8, 2),
+        NORMAL_OCT16: Z(z.NORMAL_OCT16, X.DATA_TYPE_UINT8, 2),
+        NORMAL: Z(z.NORMAL, X.DATA_TYPE_FLOAT, 3),
       },
-      Z = ['LAZ', 'LAS'];
-    function _(A) {
+      AA = ['LAZ', 'LAS'];
+    function gA(A) {
       return 'LAZ' === A;
     }
-    class $ {
+    class IA {
       constructor(A = []) {
         if (
           ((this.attributes = []),
           (this.byteSize = 0),
           (this.size = 0),
           (this.compressedFormat = null),
-          'string' != typeof (g = A) || -1 === Z.indexOf(g))
+          'string' != typeof (g = A) || -1 === AA.indexOf(g))
         ) {
           var g;
           if ('string' == typeof A)
             throw new Error(
-              `Unknown pointAttributes value: "${A}". Expected an array of attribute names or one of: ${Z.join(', ')}.`,
+              `Unknown pointAttributes value: "${A}". Expected an array of attribute names or one of: ${AA.join(', ')}.`,
             );
           for (let g = 0; g < A.length; g++) {
             const I = A[g],
-              B = X[I];
+              B = $[I];
             if (void 0 === B)
               throw new Error(
-                `Unknown point attribute: "${I}". Known attributes: ${Object.keys(X).join(', ')}.`,
+                `Unknown point attribute: "${I}". Known attributes: ${Object.keys($).join(', ')}.`,
               );
             this.attributes.push(B), (this.byteSize += B.byteSize), this.size++;
           }
@@ -994,24 +1076,24 @@
         this.attributes.push(A), (this.byteSize += A.byteSize), this.size++;
       }
       hasColors() {
-        return null !== this.compressedFormat || void 0 !== this.attributes.find(AA);
+        return null !== this.compressedFormat || void 0 !== this.attributes.find(BA);
       }
       hasNormals() {
-        return void 0 !== this.attributes.find(gA);
+        return void 0 !== this.attributes.find(CA);
       }
     }
-    function AA({ name: A }) {
-      return A === V.COLOR_PACKED;
+    function BA({ name: A }) {
+      return A === z.COLOR_PACKED;
     }
-    function gA({ name: A }) {
+    function CA({ name: A }) {
       return (
-        A === V.NORMAL_SPHEREMAPPED ||
-        A === V.NORMAL_FLOATS ||
-        A === V.NORMAL ||
-        A === V.NORMAL_OCT16
+        A === z.NORMAL_SPHEREMAPPED ||
+        A === z.NORMAL_FLOATS ||
+        A === z.NORMAL ||
+        A === z.NORMAL_OCT16
       );
     }
-    function IA(A, g) {
+    function QA(A, g) {
       return new a.Box3().setFromPoints([
         new a.Vector3(A.min.x, A.min.y, A.min.z).applyMatrix4(g),
         new a.Vector3(A.min.x, A.min.y, A.min.z).applyMatrix4(g),
@@ -1024,7 +1106,7 @@
         new a.Vector3(A.max.x, A.max.y, A.max.z).applyMatrix4(g),
       ]);
     }
-    function BA(A, g) {
+    function EA(A, g) {
       const I = A.min.clone(),
         B = A.max.clone(),
         C = new a.Vector3().subVectors(B, I);
@@ -1035,10 +1117,10 @@
         new a.Box3(I, B)
       );
     }
-    class CA extends a.EventDispatcher {
+    class tA extends a.EventDispatcher {
       constructor(A, g, I) {
         super(),
-          (this.id = CA.idCount++),
+          (this.id = tA.idCount++),
           (this.level = 0),
           (this.spacing = 0),
           (this.hasChildren = !1),
@@ -1129,9 +1211,9 @@
           ? Promise.resolve()
           : Promise.resolve(this.pcoGeometry.loader.getUrl(this.getHierarchyUrl()))
               .then((A) => this.pcoGeometry.xhrRequest(A, { mode: 'cors' }))
-              .then((A) => y(A))
-              .then((A) => A.arrayBuffer())
               .then((A) => d(A))
+              .then((A) => A.arrayBuffer())
+              .then((A) => y(A))
               .then((A) => this.loadHierarchy(this, A));
       }
       getHierarchyBaseUrl() {
@@ -1172,8 +1254,8 @@
           E = A.substring(0, A.length - 1),
           t = C.get(E),
           e = A.length - 1,
-          i = BA(t.boundingBox, Q),
-          o = new CA(A, B, i);
+          i = EA(t.boundingBox, Q),
+          o = new tA(A, B, i);
         (o.level = e),
           (o.numPoints = g),
           (o.hasChildren = I > 0),
@@ -1182,8 +1264,8 @@
           C.set(A, o);
       }
     }
-    CA.idCount = 0;
-    class QA {
+    tA.idCount = 0;
+    class eA {
       constructor(A, g, I, B, C) {
         (this.loader = A),
           (this.boundingBox = g),
@@ -1198,7 +1280,7 @@
           (this.numNodesLoading = 0),
           (this.maxNumNodesLoading = 3),
           (this.spacing = 0),
-          (this.pointAttributes = new $([])),
+          (this.pointAttributes = new IA([])),
           (this.projection = null),
           (this.url = null);
       }
@@ -1212,7 +1294,7 @@
         this.loader.callbacks = [];
       }
     }
-    class EA extends a.EventDispatcher {
+    class iA extends a.EventDispatcher {
       constructor(A, g) {
         super(),
           (this.pcIndex = void 0),
@@ -1266,23 +1348,23 @@
         return this.geometryNode.spacing;
       }
     }
-    function tA(A, g, I) {
+    function oA(A, g, I) {
       return Math.min(Math.max(g, A), I);
     }
-    class eA {
+    class nA {
       dispose() {
         this.pickState &&
           (this.pickState.material.dispose(), this.pickState.renderTarget.dispose());
       }
       pick(A, g, I, B, C = {}) {
         if (0 === B.length) return null;
-        const Q = this.pickState ? this.pickState : (this.pickState = eA.getPickState()),
+        const Q = this.pickState ? this.pickState : (this.pickState = nA.getPickState()),
           E = Q.material,
           t = A.getPixelRatio(),
           e = Math.ceil(A.domElement.clientWidth * t),
           i = Math.ceil(A.domElement.clientHeight * t);
-        eA.updatePickRenderTarget(this.pickState, e, i);
-        const o = eA.helperVec3;
+        nA.updatePickRenderTarget(this.pickState, e, i);
+        const o = nA.helperVec3;
         C.pixelPosition
           ? o.copy(C.pixelPosition)
           : (o.addVectors(I.origin, I.direction).project(g),
@@ -1290,14 +1372,14 @@
             (o.y = (o.y + 1) * i * 0.5));
         const n = Math.floor((C.pickWindowSize || 15) * t),
           r = (n - 1) / 2,
-          a = Math.floor(tA(o.x - r, 0, e)),
-          s = Math.floor(tA(o.y - r, 0, i));
-        eA.prepareRender(A, a, s, n, E, Q);
-        const D = eA.render(A, g, E, B, I, Q, C);
+          a = Math.floor(oA(o.x - r, 0, e)),
+          s = Math.floor(oA(o.y - r, 0, i));
+        nA.prepareRender(A, a, s, n, E, Q);
+        const D = nA.render(A, g, E, B, I, Q, C);
         E.clearVisibleNodeTextureOffsets();
-        const c = eA.readPixels(A, a, s, n),
-          h = eA.findHit(c, n);
-        return eA.getPickPoint(h, D);
+        const c = nA.readPixels(A, a, s, n),
+          h = nA.findHit(c, n);
+        return nA.getPickPoint(h, D);
       }
       static prepareRender(A, g, I, B, C, Q) {
         A.setScissor(g, I, B, B),
@@ -1313,12 +1395,12 @@
       static render(A, g, I, B, C, Q, E) {
         const t = [];
         for (const e of B) {
-          const B = eA.nodesOnRay(e, C);
+          const B = nA.nodesOnRay(e, C);
           B.length &&
-            (eA.updatePickMaterial(I, e.material, E),
+            (nA.updatePickMaterial(I, e.material, E),
             I.updateMaterial(e, B, g, A),
             E.onBeforePickRender && E.onBeforePickRender(I, Q.renderTarget),
-            (Q.scene.children = eA.createTempNodes(e, B, I, t.length)),
+            (Q.scene.children = nA.createTempNodes(e, B, I, t.length)),
             A.render(Q.scene, g),
             B.forEach((A) => t.push({ node: A, octree: e })));
         }
@@ -1328,7 +1410,7 @@
         const I = [],
           B = g.clone();
         for (const g of A.visibleNodes) {
-          const C = eA.helperSphere.copy(g.boundingSphere).applyMatrix4(A.matrixWorld);
+          const C = nA.helperSphere.copy(g.boundingSphere).applyMatrix4(A.matrixWorld);
           B.intersectsSphere(C) && I.push(g);
         }
         return I;
@@ -1354,7 +1436,7 @@
             (e.frustumCulled = !1);
           const i = B + Q + 1;
           i > 255 && console.error('More than 255 nodes for pick are not supported.'),
-            (e.onBeforeRender = x.makeOnBeforeRender(A, E, i)),
+            (e.onBeforeRender = O.makeOnBeforeRender(A, E, i)),
             C.push(e);
         }
         return C;
@@ -1370,6 +1452,7 @@
           (A.classificationFilter = g.classificationFilter),
           (A.useFilterByClassification = g.useFilterByClassification),
           (A.filterByNormalThreshold = g.filterByNormalThreshold),
+          A.shareCorridorMask(g),
           I.pickOutsideClipRegion
             ? (A.clipMode = Q.DISABLED)
             : ((A.clipMode = g.clipMode),
@@ -1379,7 +1462,7 @@
       static updatePickRenderTarget(A, g, I) {
         (A.renderTarget.width === g && A.renderTarget.height === I) ||
           (A.renderTarget.dispose(),
-          (A.renderTarget = eA.makePickRenderTarget()),
+          (A.renderTarget = nA.makePickRenderTarget()),
           A.renderTarget.setSize(g, I));
       }
       static makePickRenderTarget() {
@@ -1414,8 +1497,8 @@
         for (const g in C) {
           if (!C.hasOwnProperty(g)) continue;
           const Q = C[g];
-          if ('position' === g) eA.addPositionToPickPoint(I, A, Q, B);
-          else if ('normal' === g) eA.addNormalToPickPoint(I, A, Q, B);
+          if ('position' === g) nA.addPositionToPickPoint(I, A, Q, B);
+          else if ('normal' === g) nA.addNormalToPickPoint(I, A, Q, B);
           else if ('indices' === g);
           else if (1 === Q.itemSize) I[g] = Q.array[A.pIndex];
           else {
@@ -1437,17 +1520,17 @@
       static getPickState() {
         const A = new a.Scene();
         A.matrixAutoUpdate = !1;
-        const g = new x();
+        const g = new O();
         return (
           (g.pointColorType = o.POINT_INDEX),
-          { renderTarget: eA.makePickRenderTarget(), material: g, scene: A }
+          { renderTarget: nA.makePickRenderTarget(), material: g, scene: A }
         );
       }
     }
-    (eA.helperVec3 = new a.Vector3()),
-      (eA.helperSphere = new a.Sphere()),
-      (eA.clearColor = new a.Color());
-    class iA {
+    (nA.helperVec3 = new a.Vector3()),
+      (nA.helperSphere = new a.Sphere()),
+      (nA.clearColor = new a.Color());
+    class rA {
       constructor(A, g) {
         (this.loader = A),
           (this.boundingBox = g),
@@ -1466,7 +1549,7 @@
         this.root.traverse((A) => A.dispose()), (this.disposed = !0);
       }
     }
-    class oA extends a.Object3D {
+    class aA extends a.Object3D {
       constructor() {
         super(...arguments), (this.root = null);
       }
@@ -1474,7 +1557,7 @@
         return null !== this.root;
       }
     }
-    function nA(A) {
+    function sA(A) {
       function g(A) {
         return A.charCodeAt(0);
       }
@@ -1504,14 +1587,14 @@
                 module: {},
                 env: { memory: new WebAssembly.Memory({ initial: w, maximum: w }) },
               },
-              y = new Uint8Array(
+              d = new Uint8Array(
                 atob(
                   'AGFzbQEAAAAADwhkeWxpbmsuMAEEAAAAAAEPAmAAAGAIf39/f39/f38AAg8BA2VudgZtZW1vcnkCAAADAwIAAQcjAhFfX3dhc21fY2FsbF9jdG9ycwAAC3NvcnRJbmRleGVzAAEKhgMCAwABC/8CAgN/A30gBwRAIAQqAighCyAEKgIYIQwgBCoCCCENQfj///8HIQlBiICAgHghBANAIAIgCkECdCIIaiALIAEgACAIaigCAEEEdGoiCCoCCJQgDSAIKgIAlCAMIAgqAgSUkpJDAACARZT8ACIINgIAIAkgCCAIIAlKGyEJIAQgCCAEIAhKGyEEIApBAWoiCiAHRw0ACyAGQQFrsyAEsiAJspOVIQtBACEEA0AgAiAEQQJ0aiIBIAsgASgCACAJa7KU/AAiATYCACADIAFBAnRqIgEgASgCAEEBajYCACAEQQFqIgQgB0cNAAsLIAZBAk8EQCADKAIAIQlBASEEA0AgAyAEQQJ0aiIBIAEoAgAgCWoiCTYCACAEQQFqIgQgBkcNAAsLIAdBAEoEQCAHIQQDQCAFIAcgAyACIARBAWsiAUECdCIGaigCAEECdGoiCSgCACIIa0ECdGogACAGaigCADYCACAJIAhBAWs2AgAgBEEBSyEGIAEhBCAGDQALCws=',
                 )
                   .split('')
                   .map(g),
               );
-            WebAssembly.instantiate(y, l).then((g) => {
+            WebAssembly.instantiate(d, l).then((g) => {
               (I = g.instance), (B = l.env.memory.buffer), (r = new Int32Array(C));
               for (let A = 0; A < C; A++) r[A] = A;
               (Q = 0),
@@ -1539,7 +1622,7 @@
             })(s);
       };
     }
-    class rA extends a.Object3D {
+    class DA extends a.Object3D {
       constructor(A = !1, g, I = !1) {
         super(),
           (this.material = null),
@@ -1689,7 +1772,7 @@
         new Promise((g) => {
           const I = new Worker(
             URL.createObjectURL(
-              new Blob(['(', nA.toString(), ')(self)'], { type: 'application/javascript' }),
+              new Blob(['(', sA.toString(), ')(self)'], { type: 'application/javascript' }),
             ),
           );
           I.postMessage({ init: !0, splatCount: A }),
@@ -1959,7 +2042,7 @@
         return this.enabled;
       }
     }
-    class aA extends oA {
+    class cA extends aA {
       constructor(A, g, I, B = !1, C = 529e4) {
         super(),
           (this.disposed = !1),
@@ -1987,12 +2070,12 @@
           (this.maxAmountOfSplats = C),
           this.position.copy(g.offset),
           this.updateMatrix(),
-          (this.material = I || g instanceof iA ? new x({ colorRgba: !0 }) : new x()),
+          (this.material = I || g instanceof rA ? new O({ colorRgba: !0 }) : new O()),
           this.initMaterial(this.material);
       }
       initMaterial(A) {
         this.updateMatrixWorld(!0);
-        const { min: g, max: I } = IA(
+        const { min: g, max: I } = QA(
             this.pcoGeometry.tightBoundingBox || this.getBoundingBoxWorld(),
             this.matrixWorld,
           ),
@@ -2018,12 +2101,12 @@
       }
       toTreeNode(A, g) {
         const I = new a.Points(A.geometry, this.material),
-          B = new EA(A, I);
+          B = new iA(A, I);
         return (
           (I.name = A.name),
           I.position.copy(A.boundingBox.min),
           (I.frustumCulled = !1),
-          (I.onBeforeRender = x.makeOnBeforeRender(this, B)),
+          (I.onBeforeRender = O.makeOnBeforeRender(this, B)),
           g
             ? (g.sceneNode.add(I),
               (g.children[A.index] = B),
@@ -2045,7 +2128,7 @@
             }),
             this.renderAsSplats &&
               null === this.splatsMesh &&
-              ((this.splatsMesh = new rA(!1, this.maxAmountOfSplats, this.loadHarmonics)),
+              ((this.splatsMesh = new DA(!1, this.maxAmountOfSplats, this.loadHarmonics)),
               this.add(this.splatsMesh))),
           null !== this.splatsMesh && this.renderAsSplats && this.splatsMesh.splatsEnabled)
         ) {
@@ -2098,13 +2181,13 @@
         this.position.y += -this.getBoundingBoxWorld().min.y;
       }
       getBoundingBoxWorld() {
-        return this.updateMatrixWorld(!0), IA(this.boundingBox, this.matrixWorld);
+        return this.updateMatrixWorld(!0), QA(this.boundingBox, this.matrixWorld);
       }
       getVisibleExtent() {
         return this.visibleBounds.applyMatrix4(this.matrixWorld);
       }
       pick(A, g, I, B = {}) {
-        return (this.picker = this.picker || new eA()), this.picker.pick(A, g, I, [this], B);
+        return (this.picker = this.picker || new nA()), this.picker.pick(A, g, I, [this], B);
       }
       get progress() {
         return 0 === this.visibleGeometry.length
@@ -2115,29 +2198,29 @@
         return this.maxAmountOfSplats;
       }
     }
-    const sA = document.createElement('canvas').getContext('webgl'),
-      DA = {
-        SHADER_INTERPOLATION: cA('EXT_frag_depth') && hA(8),
-        SHADER_SPLATS: cA('EXT_frag_depth') && cA('OES_texture_float') && hA(8),
-        SHADER_EDL: cA('OES_texture_float') && hA(8),
+    const hA = document.createElement('canvas').getContext('webgl'),
+      wA = {
+        SHADER_INTERPOLATION: lA('EXT_frag_depth') && dA(8),
+        SHADER_SPLATS: lA('EXT_frag_depth') && lA('OES_texture_float') && dA(8),
+        SHADER_EDL: lA('OES_texture_float') && dA(8),
         precision: (function () {
-          if (null === sA) return '';
-          const A = sA.getShaderPrecisionFormat(sA.VERTEX_SHADER, sA.HIGH_FLOAT),
-            g = sA.getShaderPrecisionFormat(sA.VERTEX_SHADER, sA.MEDIUM_FLOAT),
-            I = sA.getShaderPrecisionFormat(sA.FRAGMENT_SHADER, sA.HIGH_FLOAT),
-            B = sA.getShaderPrecisionFormat(sA.FRAGMENT_SHADER, sA.MEDIUM_FLOAT),
+          if (null === hA) return '';
+          const A = hA.getShaderPrecisionFormat(hA.VERTEX_SHADER, hA.HIGH_FLOAT),
+            g = hA.getShaderPrecisionFormat(hA.VERTEX_SHADER, hA.MEDIUM_FLOAT),
+            I = hA.getShaderPrecisionFormat(hA.FRAGMENT_SHADER, hA.HIGH_FLOAT),
+            B = hA.getShaderPrecisionFormat(hA.FRAGMENT_SHADER, hA.MEDIUM_FLOAT),
             C = A && I && A.precision > 0 && I.precision > 0,
             Q = g && B && g.precision > 0 && B.precision > 0;
           return C ? 'highp' : Q ? 'mediump' : 'lowp';
         })(),
       };
-    function cA(A) {
-      return null !== sA && Boolean(sA.getExtension(A));
+    function lA(A) {
+      return null !== hA && Boolean(hA.getExtension(A));
     }
-    function hA(A) {
-      return null !== sA && sA.getParameter(sA.MAX_VARYING_VECTORS) >= A;
+    function dA(A) {
+      return null !== hA && hA.getParameter(hA.MAX_VARYING_VECTORS) >= A;
     }
-    class wA {
+    class yA {
       constructor() {
         (this.resolvers = []), (this.promises = []);
       }
@@ -2155,7 +2238,7 @@
         );
       }
     }
-    class lA {
+    class fA {
       constructor(A, g) {
         (this.wrappedWorker = A),
           (this.maxIdle = g),
@@ -2177,13 +2260,13 @@
         this.timeoutId && window.clearTimeout(this.timeoutId);
       }
     }
-    class yA {
+    class uA {
       constructor(A, g) {
-        (this.maxWorkers = A), (this.workerType = g), (this.pool = new wA()), (this.poolSize = 0);
+        (this.maxWorkers = A), (this.workerType = g), (this.pool = new yA()), (this.poolSize = 0);
       }
       getWorker() {
         return this.poolSize < this.maxWorkers
-          ? (this.poolSize++, Promise.resolve(new lA(new this.workerType(), yA.POOL_MAX_IDLE)))
+          ? (this.poolSize++, Promise.resolve(new fA(new this.workerType(), uA.POOL_MAX_IDLE)))
           : this.pool
               .dequeue()
               .then(
@@ -2194,8 +2277,8 @@
         A.markIdle(), this.pool.enqueue(A);
       }
     }
-    yA.POOL_MAX_IDLE = 7e3;
-    class dA {
+    uA.POOL_MAX_IDLE = 7e3;
+    class NA {
       constructor(A) {
         (this.versionMinor = 0), (this.version = A);
         const g = -1 === A.indexOf('.') ? A.length : A.indexOf('.');
@@ -2204,14 +2287,14 @@
           isNaN(this.versionMinor) && (this.versionMinor = 0);
       }
       newerThan(A) {
-        const g = new dA(A);
+        const g = new NA(A);
         return (
           this.versionMajor > g.versionMajor ||
           (this.versionMajor === g.versionMajor && this.versionMinor > g.versionMinor)
         );
       }
       equalOrHigher(A) {
-        const g = new dA(A);
+        const g = new NA(A);
         return (
           this.versionMajor > g.versionMajor ||
           (this.versionMajor === g.versionMajor && this.versionMinor >= g.versionMinor)
@@ -2221,7 +2304,7 @@
         return !this.newerThan(A);
       }
     }
-    class fA {
+    class FA {
       constructor({
         getUrl: A = (A) => Promise.resolve(A),
         version: g,
@@ -2230,7 +2313,7 @@
         xhrRequest: C,
       }) {
         (this.disposed = !1),
-          (this.version = 'string' == typeof g ? new dA(g) : g),
+          (this.version = 'string' == typeof g ? new NA(g) : g),
           (this.xhrRequest = C),
           (this.getUrl = A),
           (this.boundingBox = I),
@@ -2245,9 +2328,9 @@
           ? Promise.resolve()
           : Promise.resolve(this.getUrl(this.getNodeUrl(A)))
               .then((A) => this.xhrRequest(A, { mode: 'cors' }))
-              .then((A) => y(A))
-              .then((A) => A.arrayBuffer())
               .then((A) => d(A))
+              .then((A) => A.arrayBuffer())
+              .then((A) => y(A))
               .then((g) => new Promise((I) => this.parse(A, g, I)));
       }
       getNodeUrl(A) {
@@ -2257,12 +2340,12 @@
       parse(A, g, I) {
         this.disposed
           ? I()
-          : fA.WORKER_POOL.getWorker().then((B) => {
+          : FA.WORKER_POOL.getWorker().then((B) => {
               const C = A.pcoGeometry.pointAttributes,
                 Q = g.byteLength / C.byteSize;
               this.version.upTo('1.5') && (A.numPoints = Q),
                 (B.worker.onmessage = (g) => {
-                  if (this.disposed) return I(), void fA.WORKER_POOL.releaseWorker(B);
+                  if (this.disposed) return I(), void FA.WORKER_POOL.releaseWorker(B);
                   const C = g.data,
                     E = (A.geometry = A.geometry || new a.BufferGeometry());
                   (E.boundingBox = A.boundingBox),
@@ -2278,7 +2361,7 @@
                     (A.pcoGeometry.needsUpdate = !0),
                     this.callbacks.forEach((g) => g(A)),
                     I(),
-                    fA.WORKER_POOL.releaseWorker(B);
+                    FA.WORKER_POOL.releaseWorker(B);
                 });
               const E = {
                 buffer: g,
@@ -2300,17 +2383,17 @@
       addBufferAttributes(A, g) {
         Object.keys(g).forEach((I) => {
           const B = g[I].buffer;
-          this.isAttribute(I, V.POSITION_CARTESIAN)
+          this.isAttribute(I, z.POSITION_CARTESIAN)
             ? A.setAttribute('position', new a.BufferAttribute(new Float32Array(B), 3))
-            : this.isAttribute(I, V.COLOR_PACKED)
+            : this.isAttribute(I, z.COLOR_PACKED)
               ? A.setAttribute('color', new a.BufferAttribute(new Uint8Array(B), 3, !0))
-              : this.isAttribute(I, V.INTENSITY)
+              : this.isAttribute(I, z.INTENSITY)
                 ? A.setAttribute('intensity', new a.BufferAttribute(new Float32Array(B), 1))
-                : this.isAttribute(I, V.CLASSIFICATION)
+                : this.isAttribute(I, z.CLASSIFICATION)
                   ? A.setAttribute('classification', new a.BufferAttribute(new Uint8Array(B), 1))
-                  : (this.isAttribute(I, V.NORMAL_SPHEREMAPPED) ||
-                      this.isAttribute(I, V.NORMAL_OCT16) ||
-                      this.isAttribute(I, V.NORMAL)) &&
+                  : (this.isAttribute(I, z.NORMAL_SPHEREMAPPED) ||
+                      this.isAttribute(I, z.NORMAL_OCT16) ||
+                      this.isAttribute(I, z.NORMAL)) &&
                     A.setAttribute('normal', new a.BufferAttribute(new Float32Array(B), 3));
         });
       }
@@ -2328,8 +2411,8 @@
         return parseInt(A, 10) === g;
       }
     }
-    fA.WORKER_POOL = new yA(32, B(91).A);
-    class NA {
+    FA.WORKER_POOL = new uA(32, B(91).A);
+    class RA {
       constructor({
         getUrl: A = (A) => Promise.resolve(A),
         version: g,
@@ -2337,7 +2420,7 @@
         xhrRequest: B,
       }) {
         (this.disposed = !1),
-          (this.version = 'string' == typeof g ? new dA(g) : g),
+          (this.version = 'string' == typeof g ? new NA(g) : g),
           (this.boundingBox = I),
           (this.getUrl = A),
           (this.xhrRequest = B),
@@ -2351,9 +2434,9 @@
           ? Promise.resolve()
           : Promise.resolve(this.getUrl(this.getNodeUrl(A)))
               .then((A) => this.xhrRequest(A, { mode: 'cors' }))
-              .then((A) => y(A))
-              .then((A) => A.arrayBuffer())
               .then((A) => d(A))
+              .then((A) => A.arrayBuffer())
+              .then((A) => y(A))
               .then((g) => {
                 if (!this.disposed) return new Promise((I, B) => this.parse(A, g, I, B));
               });
@@ -2364,13 +2447,13 @@
       parse(A, g, I, B) {
         this.disposed
           ? I()
-          : NA.WORKER_POOL.getWorker().then((C) => {
+          : RA.WORKER_POOL.getWorker().then((C) => {
               C.worker.onmessage = (g) => {
-                if (this.disposed) return I(), void NA.WORKER_POOL.releaseWorker(C);
+                if (this.disposed) return I(), void RA.WORKER_POOL.releaseWorker(C);
                 const Q = g.data;
                 if (Q.error)
                   return (
-                    NA.WORKER_POOL.releaseWorker(C),
+                    RA.WORKER_POOL.releaseWorker(C),
                     void B(new Error(`LAZ decode failed for node "${A.name}": ${Q.error}`))
                   );
                 const E = (A.geometry = A.geometry || new a.BufferGeometry());
@@ -2388,7 +2471,7 @@
                   (A.pcoGeometry.needsUpdate = !0),
                   this.callbacks.forEach((g) => g(A)),
                   I(),
-                  NA.WORKER_POOL.releaseWorker(C);
+                  RA.WORKER_POOL.releaseWorker(C);
               };
               const Q = A.boundingBox.min.clone().add(A.pcoGeometry.offset),
                 E = { buffer: g, nodeMin: Q.toArray() };
@@ -2418,10 +2501,10 @@
           A.setAttribute('normal', new a.BufferAttribute(new Float32Array(3 * g), 3));
       }
     }
-    function uA(A, g, I) {
+    function MA(A, g, I) {
       return Promise.resolve(g(A)).then((A) =>
         I(A, { mode: 'cors' })
-          .then((A) => y(A))
+          .then((A) => d(A))
           .then((A) => A.json())
           .then(
             (function (A, g, I) {
@@ -2449,18 +2532,18 @@
                   );
                 })(B);
                 let t;
-                if (_(B.pointAttributes)) {
-                  if (new dA(B.version).upTo('1.6'))
+                if (gA(B.pointAttributes)) {
+                  if (new NA(B.version).upTo('1.6'))
                     throw new Error(
                       `Potree v1 LAZ-per-node clouds require version >= 1.7 (cloud.js advertises ${B.version}).`,
                     );
-                  t = new NA({ getUrl: g, version: B.version, boundingBox: Q, xhrRequest: I });
+                  t = new RA({ getUrl: g, version: B.version, boundingBox: Q, xhrRequest: I });
                 } else {
                   if ('LAS' === B.pointAttributes)
                     throw new Error(
                       'Potree v1 clouds with `pointAttributes: "LAS"` (uncompressed per-node LAS) are not supported.',
                     );
-                  t = new fA({
+                  t = new FA({
                     getUrl: g,
                     version: B.version,
                     boundingBox: Q,
@@ -2468,7 +2551,7 @@
                     xhrRequest: I,
                   });
                 }
-                const e = new QA(t, Q, E, C, I);
+                const e = new eA(t, Q, E, C, I);
                 (e.url = A),
                   (e.octreeDir = B.octreeDir),
                   (e.needsUpdate = !0),
@@ -2476,11 +2559,11 @@
                   (e.hierarchyStepSize = B.hierarchyStepSize),
                   (e.projection = B.projection),
                   (e.offset = C),
-                  (e.pointAttributes = new $(B.pointAttributes));
+                  (e.pointAttributes = new IA(B.pointAttributes));
                 const i = {},
-                  o = new dA(B.version);
+                  o = new NA(B.version);
                 return (function (A, g, I, B) {
-                  const C = new CA('r', A, A.boundingBox);
+                  const C = new tA('r', A, A.boundingBox);
                   return (
                     (C.hasChildren = !0),
                     (C.spacing = A.spacing),
@@ -2495,10 +2578,10 @@
                       (function (A, g, I) {
                         for (let B = 1; B < g.hierarchy.length; B++) {
                           const [C, Q] = g.hierarchy[B],
-                            { index: E, parentName: t, level: e } = FA(C),
+                            { index: E, parentName: t, level: e } = SA(C),
                             i = I[t],
-                            o = BA(i.boundingBox, E),
-                            n = new CA(C, A, o);
+                            o = EA(i.boundingBox, E),
+                            n = new tA(C, A, o);
                           (n.level = e),
                             (n.numPoints = Q),
                             (n.spacing = A.spacing / Math.pow(2, n.level)),
@@ -2515,18 +2598,18 @@
           ),
       );
     }
-    function FA(A) {
+    function SA(A) {
       return { index: w(A), parentName: A.substring(0, A.length - 1), level: A.length - 1 };
     }
-    var RA;
-    (NA.WORKER_POOL = new yA(4, B(361).A)),
+    var GA;
+    (RA.WORKER_POOL = new uA(4, B(361).A)),
       (function (A) {
         (A.DECODER_WORKER = 'DECODER_WORKER'),
           (A.DECODER_WORKER_GLTF = 'DECODER_WORKER_GLTF'),
           (A.DECODER_WORKER_BROTLI = 'DECODER_WORKER_BROTLI'),
           (A.DECODER_WORKER_SPLATS = 'DECODER_WORKER_SPLATS');
-      })(RA || (RA = {}));
-    class MA {
+      })(GA || (GA = {}));
+    class pA {
       constructor() {
         this.workers = {
           DECODER_WORKER: [],
@@ -2540,13 +2623,13 @@
         if (0 === this.workers[A].length) {
           const g = (function (A) {
             switch (A) {
-              case RA.DECODER_WORKER:
+              case GA.DECODER_WORKER:
                 return new (0, B(300).A)();
-              case RA.DECODER_WORKER_GLTF:
+              case GA.DECODER_WORKER_GLTF:
                 return new (0, B(218).A)();
-              case RA.DECODER_WORKER_BROTLI:
+              case GA.DECODER_WORKER_BROTLI:
                 return new (0, B(741).A)();
-              case RA.DECODER_WORKER_SPLATS:
+              case GA.DECODER_WORKER_SPLATS:
                 return new (0, B(852).A)();
               default:
                 throw new Error('Unknown worker type');
@@ -2562,11 +2645,11 @@
         this.workers[A].push(g);
       }
     }
-    class SA {
+    class LA {
       constructor(A, g) {
         (this.metadata = A),
           (this.context = g),
-          (this.workerType = RA.DECODER_WORKER_BROTLI),
+          (this.workerType = GA.DECODER_WORKER_BROTLI),
           (this._metadata = A);
       }
       async decode(A, g) {
@@ -2646,11 +2729,11 @@
         return { data: I, buffer: g, geometry: C };
       }
     }
-    class GA {
+    class UA {
       constructor(A, g) {
         (this.metadata = A),
           (this.context = g),
-          (this.workerType = RA.DECODER_WORKER),
+          (this.workerType = GA.DECODER_WORKER),
           (this._metadata = A);
       }
       async decode(A, g) {
@@ -2731,18 +2814,18 @@
         return { data: I, buffer: g, geometry: C };
       }
     }
-    function LA(A, g) {
+    function YA(A, g) {
       return `${A}${g}`;
     }
-    function pA(A, g) {
+    function mA(A, g) {
       var I = new Uint8Array(A.byteLength + g.byteLength);
       return I.set(new Uint8Array(A), 0), I.set(new Uint8Array(g), A.byteLength), I.buffer;
     }
-    class UA {
+    class KA {
       constructor(A, g) {
         (this.metadata = A),
           (this.context = g),
-          (this.workerType = RA.DECODER_WORKER_GLTF),
+          (this.workerType = GA.DECODER_WORKER_GLTF),
           (this._metadata = A);
       }
       async decode(A, g) {
@@ -2759,7 +2842,7 @@
             t = await g.arrayBuffer(),
             e = { Range: `bytes=${4n * I}-${4n * I + 4n * B - 1n}` },
             i = await this.xhrRequest(Q, { headers: e });
-          C = pA(t, await i.arrayBuffer());
+          C = mA(t, await i.arrayBuffer());
         }
         const t = A.octreeGeometry.pointAttributes,
           e = A.octreeGeometry.scale,
@@ -2822,11 +2905,11 @@
         return this.context.xhrRequest;
       }
     }
-    class YA {
+    class kA {
       constructor(A, g) {
         (this.metadata = A),
           (this.context = g),
-          (this.workerType = RA.DECODER_WORKER_SPLATS),
+          (this.workerType = GA.DECODER_WORKER_SPLATS),
           (this._metadata = A);
       }
       async decode(A, g) {
@@ -2902,27 +2985,27 @@
               return (await this.xhrRequest(A, { headers: Q })).arrayBuffer();
             },
             g = Object.entries(C).map(([g, I]) => A(I, e[g])),
-            [E, t, i, o, n, r, a, s, D, c, h, w, l, y, d, f, N, u, F, R] = await Promise.all(g);
-          (Q = pA(E, t)),
-            (Q = pA(Q, i)),
-            (Q = pA(Q, o)),
-            (Q = pA(Q, n)),
+            [E, t, i, o, n, r, a, s, D, c, h, w, l, d, y, f, u, N, F, R] = await Promise.all(g);
+          (Q = mA(E, t)),
+            (Q = mA(Q, i)),
+            (Q = mA(Q, o)),
+            (Q = mA(Q, n)),
             this.harmonicsEnabled &&
-              ((Q = pA(Q, r)),
-              (Q = pA(Q, a)),
-              (Q = pA(Q, s)),
-              (Q = pA(Q, D)),
-              (Q = pA(Q, c)),
-              (Q = pA(Q, h)),
-              (Q = pA(Q, w)),
-              (Q = pA(Q, l)),
-              (Q = pA(Q, y)),
-              (Q = pA(Q, d)),
-              (Q = pA(Q, f)),
-              (Q = pA(Q, N)),
-              (Q = pA(Q, u)),
-              (Q = pA(Q, F)),
-              (Q = pA(Q, R)));
+              ((Q = mA(Q, r)),
+              (Q = mA(Q, a)),
+              (Q = mA(Q, s)),
+              (Q = mA(Q, D)),
+              (Q = mA(Q, c)),
+              (Q = mA(Q, h)),
+              (Q = mA(Q, w)),
+              (Q = mA(Q, l)),
+              (Q = mA(Q, d)),
+              (Q = mA(Q, y)),
+              (Q = mA(Q, f)),
+              (Q = mA(Q, u)),
+              (Q = mA(Q, N)),
+              (Q = mA(Q, F)),
+              (Q = mA(Q, R)));
         }
         const i = A.octreeGeometry.pointAttributes,
           o = A.octreeGeometry.scale,
@@ -2946,37 +3029,37 @@
           };
         g.postMessage(w, [w.buffer]);
         const l = (await new Promise((A) => (g.onmessage = A))).data,
-          y = l.attributeBuffers,
-          d = new a.BufferGeometry();
-        d.drawRange.count = A.numPoints;
-        for (const A in y) {
-          const g = y[A].buffer;
+          d = l.attributeBuffers,
+          y = new a.BufferGeometry();
+        y.drawRange.count = A.numPoints;
+        for (const A in d) {
+          const g = d[A].buffer;
           'position' === A &&
-            d.setAttribute('centers', new a.BufferAttribute(new Float32Array(g), 4)),
-            'scale' === A && d.setAttribute('scale', new a.BufferAttribute(new Float32Array(g), 3)),
+            y.setAttribute('centers', new a.BufferAttribute(new Float32Array(g), 4)),
+            'scale' === A && y.setAttribute('scale', new a.BufferAttribute(new Float32Array(g), 3)),
             'orientation' === A &&
-              d.setAttribute('orientation', new a.BufferAttribute(new Float32Array(g), 4)),
+              y.setAttribute('orientation', new a.BufferAttribute(new Float32Array(g), 4)),
             'raw_position' === A
-              ? d.setAttribute('raw_position', new a.BufferAttribute(new Float32Array(g), 4))
+              ? y.setAttribute('raw_position', new a.BufferAttribute(new Float32Array(g), 4))
               : 'COVARIANCE0' === A
-                ? d.setAttribute('COVARIANCE0', new a.BufferAttribute(new Float32Array(g), 4))
+                ? y.setAttribute('COVARIANCE0', new a.BufferAttribute(new Float32Array(g), 4))
                 : 'COVARIANCE1' === A
-                  ? d.setAttribute('COVARIANCE1', new a.BufferAttribute(new Float32Array(g), 2))
+                  ? y.setAttribute('COVARIANCE1', new a.BufferAttribute(new Float32Array(g), 2))
                   : 'POS_COLOR' === A &&
-                    d.setAttribute('POS_COLOR', new a.BufferAttribute(new Uint32Array(g), 4)),
+                    y.setAttribute('POS_COLOR', new a.BufferAttribute(new Uint32Array(g), 4)),
             this.harmonicsEnabled &&
               ('HARMONICS1' === A
-                ? d.setAttribute('HARMONICS1', new a.BufferAttribute(new Uint32Array(g), 3))
+                ? y.setAttribute('HARMONICS1', new a.BufferAttribute(new Uint32Array(g), 3))
                 : 'HARMONICS2' === A
-                  ? d.setAttribute('HARMONICS2', new a.BufferAttribute(new Uint32Array(g), 5))
+                  ? y.setAttribute('HARMONICS2', new a.BufferAttribute(new Uint32Array(g), 5))
                   : 'HARMONICS3' === A &&
-                    d.setAttribute('HARMONICS3', new a.BufferAttribute(new Uint32Array(g), 7)));
+                    y.setAttribute('HARMONICS3', new a.BufferAttribute(new Uint32Array(g), 7)));
         }
         return (
-          (d.userData.maxDepth = this._metadata.hierarchy.depth + 1),
-          (d.userData.totalSplats = this._metadata.points),
-          (d.userData.offset = new a.Vector3(...h).sub(r)),
-          { data: l, buffer: Q, geometry: d }
+          (y.userData.maxDepth = this._metadata.hierarchy.depth + 1),
+          (y.userData.totalSplats = this._metadata.points),
+          (y.userData.offset = new a.Vector3(...h).sub(r)),
+          { data: l, buffer: Q, geometry: y }
         );
       }
       get getUrl() {
@@ -2989,7 +3072,7 @@
         return this.context.harmonicsEnabled;
       }
     }
-    class mA {
+    class HA {
       constructor(A, g, I) {
         (this.name = A),
           (this.octreeGeometry = g),
@@ -3003,7 +3086,7 @@
           (this.isTreeNode = !1),
           (this.isGeometryNode = !0),
           (this.children = [null, null, null, null, null, null, null, null]),
-          (this.id = mA.IDCount++),
+          (this.id = HA.IDCount++),
           (this.index = parseInt(A.charAt(A.length - 1))),
           (this.boundingSphere = I.getBoundingSphere(new a.Sphere())),
           (this.tightBoundingBox = I.clone()),
@@ -3051,8 +3134,8 @@
         }
       }
     }
-    (mA.IDCount = 0), (mA.IDCount = 0);
-    const KA = {
+    (HA.IDCount = 0), (HA.IDCount = 0);
+    const JA = {
       DATA_TYPE_DOUBLE: { ordinal: 0, name: 'double', size: 8 },
       DATA_TYPE_FLOAT: { ordinal: 1, name: 'float', size: 4 },
       DATA_TYPE_INT8: { ordinal: 2, name: 'int8', size: 1 },
@@ -3064,9 +3147,9 @@
       DATA_TYPE_INT64: { ordinal: 8, name: 'int64', size: 8 },
       DATA_TYPE_UINT64: { ordinal: 9, name: 'uint64', size: 8 },
     };
-    let kA = 0;
-    for (const A in KA) (KA[kA] = KA[A]), kA++;
-    class HA {
+    let bA = 0;
+    for (const A in JA) (JA[bA] = JA[A]), bA++;
+    class TA {
       constructor(A, g, I, B = [1 / 0, -1 / 0], C = void 0) {
         (this.name = A),
           (this.type = g),
@@ -3077,25 +3160,25 @@
           (this.description = '');
       }
     }
-    const JA = {
-      POSITION_CARTESIAN: new HA('POSITION_CARTESIAN', KA.DATA_TYPE_FLOAT, 3),
-      RGBA_PACKED: new HA('COLOR_PACKED', KA.DATA_TYPE_INT8, 4),
-      COLOR_PACKED: new HA('COLOR_PACKED', KA.DATA_TYPE_INT8, 4),
-      RGB_PACKED: new HA('COLOR_PACKED', KA.DATA_TYPE_INT8, 3),
-      NORMAL_FLOATS: new HA('NORMAL_FLOATS', KA.DATA_TYPE_FLOAT, 3),
-      INTENSITY: new HA('INTENSITY', KA.DATA_TYPE_UINT16, 1),
-      CLASSIFICATION: new HA('CLASSIFICATION', KA.DATA_TYPE_UINT8, 1),
-      NORMAL_SPHEREMAPPED: new HA('NORMAL_SPHEREMAPPED', KA.DATA_TYPE_UINT8, 2),
-      NORMAL_OCT16: new HA('NORMAL_OCT16', KA.DATA_TYPE_UINT8, 2),
-      NORMAL: new HA('NORMAL', KA.DATA_TYPE_FLOAT, 3),
-      RETURN_NUMBER: new HA('RETURN_NUMBER', KA.DATA_TYPE_UINT8, 1),
-      NUMBER_OF_RETURNS: new HA('NUMBER_OF_RETURNS', KA.DATA_TYPE_UINT8, 1),
-      SOURCE_ID: new HA('SOURCE_ID', KA.DATA_TYPE_UINT16, 1),
-      INDICES: new HA('INDICES', KA.DATA_TYPE_UINT32, 1),
-      SPACING: new HA('SPACING', KA.DATA_TYPE_FLOAT, 1),
-      GPS_TIME: new HA('GPS_TIME', KA.DATA_TYPE_DOUBLE, 1),
+    const xA = {
+      POSITION_CARTESIAN: new TA('POSITION_CARTESIAN', JA.DATA_TYPE_FLOAT, 3),
+      RGBA_PACKED: new TA('COLOR_PACKED', JA.DATA_TYPE_INT8, 4),
+      COLOR_PACKED: new TA('COLOR_PACKED', JA.DATA_TYPE_INT8, 4),
+      RGB_PACKED: new TA('COLOR_PACKED', JA.DATA_TYPE_INT8, 3),
+      NORMAL_FLOATS: new TA('NORMAL_FLOATS', JA.DATA_TYPE_FLOAT, 3),
+      INTENSITY: new TA('INTENSITY', JA.DATA_TYPE_UINT16, 1),
+      CLASSIFICATION: new TA('CLASSIFICATION', JA.DATA_TYPE_UINT8, 1),
+      NORMAL_SPHEREMAPPED: new TA('NORMAL_SPHEREMAPPED', JA.DATA_TYPE_UINT8, 2),
+      NORMAL_OCT16: new TA('NORMAL_OCT16', JA.DATA_TYPE_UINT8, 2),
+      NORMAL: new TA('NORMAL', JA.DATA_TYPE_FLOAT, 3),
+      RETURN_NUMBER: new TA('RETURN_NUMBER', JA.DATA_TYPE_UINT8, 1),
+      NUMBER_OF_RETURNS: new TA('NUMBER_OF_RETURNS', JA.DATA_TYPE_UINT8, 1),
+      SOURCE_ID: new TA('SOURCE_ID', JA.DATA_TYPE_UINT16, 1),
+      INDICES: new TA('INDICES', JA.DATA_TYPE_UINT32, 1),
+      SPACING: new TA('SPACING', JA.DATA_TYPE_FLOAT, 1),
+      GPS_TIME: new TA('GPS_TIME', JA.DATA_TYPE_DOUBLE, 1),
     };
-    class bA {
+    class vA {
       constructor(A, g = [], I = 0, B = 0, C = []) {
         if (
           ((this.attributes = g),
@@ -3106,7 +3189,7 @@
         )
           for (let g = 0; g < A.length; g++) {
             const I = A[g],
-              B = JA[I];
+              B = xA[I];
             this.attributes.push(B), (this.byteSize += B.byteSize), this.size++;
           }
       }
@@ -3120,10 +3203,10 @@
         for (const A in this.attributes) {
           const g = this.attributes[A];
           if (
-            g === JA.NORMAL_SPHEREMAPPED ||
-            g === JA.NORMAL_FLOATS ||
-            g === JA.NORMAL ||
-            g === JA.NORMAL_OCT16
+            g === xA.NORMAL_SPHEREMAPPED ||
+            g === xA.NORMAL_FLOATS ||
+            g === xA.NORMAL ||
+            g === xA.NORMAL_OCT16
           )
             return !0;
         }
@@ -3133,18 +3216,18 @@
         return this.attributes.find((g) => g.name === A);
       }
     }
-    class TA {
+    class qA {
       constructor(A, g, I) {
         (this.url = A),
           (this.metadata = g),
           (this.loadingContext = I),
           'GLTF' === this.metadata.encoding
             ? g.attributes.some((A) => 'sh_band_0' === A.name)
-              ? (this.decoder = new YA(g, I))
-              : (this.decoder = new UA(g, I))
+              ? (this.decoder = new kA(g, I))
+              : (this.decoder = new KA(g, I))
             : 'BROTLI' === this.metadata.encoding
-              ? (this.decoder = new SA(g, I))
-              : (this.decoder = new GA(g, I));
+              ? (this.decoder = new LA(g, I))
+              : (this.decoder = new UA(g, I));
       }
       async load(A) {
         if (A.loaded || A.loading) return;
@@ -3213,8 +3296,8 @@
             for (let A = 0; A < 8; A++) {
               if (!((1 << A) & e)) continue;
               const I = g.name + A,
-                B = vA(g.boundingBox, A),
-                C = new mA(I, Q, B);
+                B = PA(g.boundingBox, A),
+                C = new HA(I, Q, B);
               (C.name = I),
                 (C.spacing = g.spacing / 2),
                 (C.level = g.level + 1),
@@ -3242,11 +3325,11 @@
         return I.max.sub(I.min), I.min.set(0, 0, 0), I;
       }
     }
-    const xA = new a.Vector3();
-    function vA(A, g) {
+    const OA = new a.Vector3();
+    function PA(A, g) {
       const I = A.min.clone(),
         B = A.max.clone(),
-        C = xA.subVectors(B, I);
+        C = OA.subVectors(B, I);
       return (
         (1 & g) > 0 ? (I.z += C.z / 2) : (B.z -= C.z / 2),
         (2 & g) > 0 ? (I.y += C.y / 2) : (B.y -= C.y / 2),
@@ -3254,21 +3337,21 @@
         new a.Box3(I, B)
       );
     }
-    const qA = {
-      double: KA.DATA_TYPE_DOUBLE,
-      float: KA.DATA_TYPE_FLOAT,
-      int8: KA.DATA_TYPE_INT8,
-      uint8: KA.DATA_TYPE_UINT8,
-      int16: KA.DATA_TYPE_INT16,
-      uint16: KA.DATA_TYPE_UINT16,
-      int32: KA.DATA_TYPE_INT32,
-      uint32: KA.DATA_TYPE_UINT32,
-      int64: KA.DATA_TYPE_INT64,
-      uint64: KA.DATA_TYPE_UINT64,
+    const VA = {
+      double: JA.DATA_TYPE_DOUBLE,
+      float: JA.DATA_TYPE_FLOAT,
+      int8: JA.DATA_TYPE_INT8,
+      uint8: JA.DATA_TYPE_UINT8,
+      int16: JA.DATA_TYPE_INT16,
+      uint16: JA.DATA_TYPE_UINT16,
+      int32: JA.DATA_TYPE_INT32,
+      uint32: JA.DATA_TYPE_UINT32,
+      int64: JA.DATA_TYPE_INT64,
+      uint64: JA.DATA_TYPE_UINT64,
     };
-    class OA {
+    class WA {
       constructor(A, g, I, B = !1) {
-        (this.workerPool = new MA()),
+        (this.workerPool = new pA()),
           (this.basePath = ''),
           (this.hierarchyPath = ''),
           (this.octreePath = ''),
@@ -3280,19 +3363,19 @@
           (this.basePath = (function (A) {
             return A.substring(0, A.lastIndexOf('/') + 1);
           })(g)),
-          (this.hierarchyPath = LA(this.basePath, 'hierarchy.bin')),
-          (this.octreePath = LA(this.basePath, 'octree.bin')),
+          (this.hierarchyPath = YA(this.basePath, 'hierarchy.bin')),
+          (this.octreePath = YA(this.basePath, 'octree.bin')),
           (this.harmonicsEnabled = B),
-          (this.gltfColorsPath = LA(this.basePath, 'colors.glbin')),
-          (this.gltfPositionsPath = LA(this.basePath, 'positions.glbin'));
+          (this.gltfColorsPath = YA(this.basePath, 'colors.glbin')),
+          (this.gltfPositionsPath = YA(this.basePath, 'positions.glbin'));
       }
       static parseAttributes(A) {
-        const g = new bA(),
+        const g = new vA(),
           I = { rgb: 'rgba' };
         for (const B of A) {
           const { name: A, numElements: C, min: Q, max: E, bufferView: t } = B,
-            e = qA[B.type],
-            i = new HA(I[A] ? I[A] : A, e, C);
+            e = VA[B.type],
+            i = new TA(I[A] ? I[A] : A, e, C);
           t && (i.uri = t.uri),
             (i.range = 1 === C && Q && E ? [Q[0], E[0]] : [Q, E]),
             'gps-time' === A &&
@@ -3314,7 +3397,7 @@
       }
       async load(A) {
         const g = await this.fetchMetadata(A),
-          I = OA.parseAttributes(g.attributes);
+          I = WA.parseAttributes(g.attributes);
         this.applyCustomBufferURI(g.encoding, I);
         const B = this.createLoader(A, g),
           C = this.createBoundingBox(g),
@@ -3332,7 +3415,7 @@
           (this.gltfColorsPath = g.getAttribute('rgba')?.uri ?? this.gltfColorsPath));
       }
       createLoader(A, g) {
-        return new TA(A, g, this);
+        return new qA(A, g, this);
       }
       createBoundingBox(A) {
         const g = new a.Vector3(...A.boundingBox.min),
@@ -3344,7 +3427,7 @@
         return A.min.sub(g), A.max.sub(g), g;
       }
       initializeOctree(A, g, I, B, C, Q) {
-        const E = new iA(A, B);
+        const E = new rA(A, B);
         return (
           (E.url = g),
           (E.spacing = I.spacing),
@@ -3360,7 +3443,7 @@
         );
       }
       initializeRootNode(A, g, I) {
-        const B = new mA('r', A, g);
+        const B = new HA('r', A, g);
         return (
           (B.level = 0),
           (B.nodeType = 2),
@@ -3387,22 +3470,22 @@
         );
       }
     }
-    async function PA(A, g, I, B = !1) {
+    async function jA(A, g, I, B = !1) {
       const C = await g(A),
-        Q = new OA(g, A, I, B),
+        Q = new WA(g, A, I, B),
         { geometry: E } = await Q.load(C);
       return E;
     }
-    function VA(A) {
+    function zA(A) {
       return null != A && A.isGeometryNode;
     }
-    function WA(A) {
+    function XA(A) {
       return null != A && A.isTreeNode;
     }
-    function jA(A) {
+    function ZA(A) {
       (this.content = []), (this.scoreFunction = A);
     }
-    jA.prototype = {
+    ZA.prototype = {
       push: function (A) {
         this.content.push(A), this.bubbleUp(this.content.length - 1);
       },
@@ -3450,7 +3533,7 @@
         }
       },
     };
-    class zA extends a.LineSegments {
+    class _A extends a.LineSegments {
       constructor(A, g = new a.Color(16776960)) {
         const I = new Uint16Array([
             0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7,
@@ -3487,12 +3570,12 @@
           super(C, new a.LineBasicMaterial({ color: g }));
       }
     }
-    class XA {
+    class $A {
       constructor(A) {
         (this.node = A), (this.next = null), (this.previous = null);
       }
     }
-    class ZA {
+    class Ag {
       constructor(A = 1e6) {
         (this.pointBudget = A),
           (this.first = null),
@@ -3512,7 +3595,7 @@
         g ? this.touchExisting(g) : this.addNew(A);
       }
       addNew(A) {
-        const g = new XA(A);
+        const g = new $A(A);
         (g.previous = this.last),
           (this.last = g),
           g.previous && (g.previous.next = g),
@@ -3566,20 +3649,20 @@
         for (const A of g) A.dispose(), this.remove(A);
       }
     }
-    class _A {
+    class gg {
       constructor(A, g, I, B) {
         (this.pointCloudIndex = A), (this.weight = g), (this.node = I), (this.parent = B);
       }
     }
-    const $A = { v1: uA, v2: PA };
-    class Ag {
+    const Ig = { v1: MA, v2: jA };
+    class Bg {
       constructor(A = 'v1') {
         (this._pointBudget = 1e6),
           (this._rendererSize = new a.Vector2()),
           (this.maxNumNodesLoading = 10),
           (this.memoryScale = 2),
-          (this.features = DA),
-          (this.lru = new ZA(this._pointBudget)),
+          (this.features = wA),
+          (this.lru = new Ag(this._pointBudget)),
           (this.updateVisibilityStructures = (() => {
             const A = new a.Matrix4(),
               g = new a.Matrix4(),
@@ -3587,7 +3670,7 @@
             return (B, C) => {
               const Q = [],
                 E = [],
-                t = new jA((A) => 1 / A.weight);
+                t = new ZA((A) => 1 / A.weight);
               for (let e = 0; e < B.length; e++) {
                 const i = B[e];
                 if (!i.initialized()) continue;
@@ -3606,18 +3689,18 @@
                   i.visible && null !== i.root)
                 ) {
                   const A = Number.MAX_VALUE;
-                  t.push(new _A(e, A, i.root));
+                  t.push(new gg(e, A, i.root));
                 }
-                WA(i.root) && i.hideDescendants(i.root.sceneNode);
+                XA(i.root) && i.hideDescendants(i.root.sceneNode);
                 for (const A of i.boundingBoxNodes) A.visible = !1;
               }
               return { frustums: Q, cameraPositions: E, priorityQueue: t };
             };
           })()),
-          (this.loadGeometry = $A[A]);
+          (this.loadGeometry = Ig[A]);
       }
       loadPointCloud(A, g, I = (A, g) => fetch(A, g), B = !1, C = 529e4) {
-        return this.loadGeometry(A, g, I, B).then((A) => new aA(this, A, void 0, B, C));
+        return this.loadGeometry(A, g, I, B).then((A) => new cA(this, A, void 0, B, C));
       }
       updatePointClouds(A, g, I, B = () => {}) {
         const C = this.updateVisibility(A, g, I);
@@ -3633,7 +3716,7 @@
         return this.lru.freeMemory(this.memoryScale), C;
       }
       static pick(A, g, I, B, C = {}) {
-        return (Ag.picker = Ag.picker || new eA()), Ag.picker.pick(g, I, B, A, C);
+        return (Bg.picker = Bg.picker || new nA()), Bg.picker.pick(g, I, B, A, C);
       }
       get pointBudget() {
         return this._pointBudget;
@@ -3645,10 +3728,10 @@
           this.lru.freeMemory(this.memoryScale));
       }
       static set maxLoaderWorkers(A) {
-        fA.WORKER_POOL.maxWorkers = A;
+        FA.WORKER_POOL.maxWorkers = A;
       }
       static get maxLoaderWorkers() {
-        return fA.WORKER_POOL.maxWorkers;
+        return FA.WORKER_POOL.maxWorkers;
       }
       updateVisibility(A, g, I) {
         let B = 0;
@@ -3677,7 +3760,7 @@
             continue;
           (B += a.numPoints), (D.numVisiblePoints += a.numPoints);
           const h = i.parent;
-          if (VA(a) && (!h || WA(h)))
+          if (zA(a) && (!h || XA(h)))
             if (a.loaded && o < 10) (a = D.toTreeNode(a, h)), o++;
             else {
               if (a.failed) {
@@ -3686,7 +3769,7 @@
               }
               a.loaded && o >= 10 && (n = !0), Q.push(a), D.visibleGeometry.push(a);
             }
-          WA(a) && (this.updateTreeNodeVisibility(D, a, C), D.visibleGeometry.push(a.geometryNode));
+          XA(a) && (this.updateTreeNodeVisibility(D, a, C), D.visibleGeometry.push(a.geometryNode));
           const w = 0.5 * I.getSize(this._rendererSize).height * I.getPixelRatio();
           this.updateChildVisibility(i, e, D, a, t[s], g, w);
         }
@@ -3731,12 +3814,12 @@
           const s = r * a;
           if (s < I.minNodePixelSize) continue;
           const c = n < r ? Number.MAX_VALUE : s + 1 / n;
-          g.push(new _A(A.pointCloudIndex, c, i, B));
+          g.push(new gg(A.pointCloudIndex, c, i, B));
         }
       }
       updateBoundingBoxVisibility(A, g) {
         if (A.showBoundingBox && !g.boundingBoxNode) {
-          const I = new zA(g.boundingBox);
+          const I = new _A(g.boundingBox);
           (I.matrixAutoUpdate = !1),
             A.boundingBoxNodes.push(I),
             (g.boundingBoxNode = I),
